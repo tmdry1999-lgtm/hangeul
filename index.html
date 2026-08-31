@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>발음 지도 앱</title>
+<script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', sans-serif;
+    background: #fdf6ec;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  h1 { color: #5a4632; font-size: 24px; }
+  .card {
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    padding: 32px;
+    width: 100%;
+    max-width: 480px;
+    text-align: center;
+  }
+  .stage-btn {
+    display: block;
+    width: 100%;
+    margin: 8px 0;
+    padding: 16px;
+    font-size: 18px;
+    border-radius: 12px;
+    border: 2px solid #d9c9a8;
+    background: #fff9ef;
+    cursor: pointer;
+  }
+  .stage-btn:hover { background: #ffe9b8; }
+  .target-text {
+    font-size: 72px;
+    font-weight: bold;
+    color: #3a2f22;
+    margin: 24px 0;
+  }
+  .big-btn {
+    font-size: 20px;
+    padding: 16px 28px;
+    border-radius: 14px;
+    border: none;
+    background: #ff9f45;
+    color: white;
+    cursor: pointer;
+    margin: 8px;
+  }
+  .big-btn:hover { background: #ff8c1a; }
+  .secondary-btn {
+    font-size: 16px;
+    padding: 12px 20px;
+    border-radius: 12px;
+    border: 2px solid #ccc;
+    background: white;
+    cursor: pointer;
+    margin: 8px;
+  }
+  .mic-btn {
+    font-size: 40px;
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    border: none;
+    background: #e74c3c;
+    color: white;
+    cursor: pointer;
+  }
+  .mic-btn.listening { background: #c0392b; animation: pulse 1s infinite; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(231,76,60,0.5); }
+    100% { box-shadow: 0 0 0 20px rgba(231,76,60,0); }
+  }
+  .status { margin-top: 16px; font-size: 16px; color: #666; min-height: 24px; }
+  .score { font-size: 48px; font-weight: bold; margin: 16px 0; }
+  .score.pass { color: #27ae60; }
+  .score.fail { color: #e74c3c; }
+  .feedback { font-size: 20px; margin-bottom: 16px; }
+  .progress { color: #999; font-size: 14px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <h1>자모 → 음절 → 단어 발음 지도</h1>
+  <div class="card" id="app"></div>
+
+<script>
+const stages = [
+  { name: '1. 모음', items: [
+      { text: '아' }, { text: '어' }, { text: '오' },
+    ] },
+  { name: '2. 자음', items: [
+      { text: '가' }, { text: '나' }, { text: '다' },
+    ] },
+  { name: '3. 받침 없는 단어', items: [
+      { text: '나비' }, { text: '토마토' }, { text: '가지' },
+    ] },
+  { name: '4. 이중모음', items: [
+      { text: '개' }, { text: '왜' }, { text: '위' },
+    ] },
+  { name: '5. 이중모음 단어', items: [
+      { text: '얘기' }, { text: '과자' }, { text: '스웨터' },
+    ] },
+  { name: '6. 대표받침', items: [
+      { text: '밥' }, { text: '눈' }, { text: '강' },
+    ] },
+];
+
+let state = { screen: 'stageList', stageIdx: 0, itemIdx: 0, sessions: [], currentSessionIdx: null, viewingSessionIdx: null };
+const app = document.getElementById('app');
+
+function render() {
+  if (state.screen === 'stageList') renderStageList();
+  else if (state.screen === 'listen') renderListen();
+  else if (state.screen === 'speak') renderSpeak();
+  else if (state.screen === 'result') renderResult(state.lastResult);
+  else if (state.screen === 'history') renderHistory();
+  else if (state.screen === 'sessionDetail') renderSessionDetail();
+}
+
+function renderStageList() {
+  app.innerHTML = `
+    <p>연습할 단계를 골라주세요</p>
+    ${stages.map((s, i) => `<button class="stage-btn" data-idx="${i}">${s.name}</button>`).join('')}
+    <button class="secondary-btn" id="historyBtn">📋 결과 확인</button>
+  `;
+  app.querySelectorAll('.stage-btn').forEach(btn => {
+    btn.onclick = () => {
+      state.stageIdx = Number(btn.dataset.idx);
+      state.itemIdx = 0;
+      state.sessions.push({ stageName: stages[state.stageIdx].name, items: [] });
+      state.currentSessionIdx = state.sessions.length - 1;
+      state.screen = 'listen';
+      render();
+    };
+  });
+  document.getElementById('historyBtn').onclick = () => { state.screen = 'history'; render(); };
+}
+
+function sessionAverage(session) {
+  const done = session.items.filter(Boolean);
+  if (!done.length) return null;
+  return Math.round(done.reduce((sum, it) => sum + it.accuracy, 0) / done.length);
+}
+
+function renderHistory() {
+  const sessionsWithData = state.sessions
+    .map((s, i) => ({ session: s, idx: i }))
+    .filter((x) => x.session.items.some(Boolean));
+
+  if (!sessionsWithData.length) {
+    app.innerHTML = `
+      <p>아직 시도한 기록이 없어요</p>
+      <button class="big-btn" id="closeBtn">단계 목록으로</button>
+    `;
+  } else {
+    const rows = sessionsWithData.slice().reverse().map(({ session, idx }) => {
+      const avg = sessionAverage(session);
+      const done = session.items.filter(Boolean).length;
+      const total = stages.find((s) => s.name === session.stageName)?.items.length || done;
+      return `
+        <button class="stage-btn" data-session-idx="${idx}" style="text-align:left;">
+          ${session.stageName} — 평균 ${avg}점 (${done}/${total}문항)
+        </button>
+      `;
+    }).join('');
+    app.innerHTML = `
+      <p>지금까지의 결과 (탭하면 자세히 볼 수 있어요)</p>
+      ${rows}
+      <br/>
+      <button class="big-btn" id="closeBtn">단계 목록으로</button>
+    `;
+    app.querySelectorAll('[data-session-idx]').forEach((btn) => {
+      btn.onclick = () => {
+        state.viewingSessionIdx = Number(btn.dataset.sessionIdx);
+        state.screen = 'sessionDetail';
+        render();
+      };
+    });
+  }
+  document.getElementById('closeBtn').onclick = () => { state.screen = 'stageList'; render(); };
+}
+
+function renderSessionDetail() {
+  const session = state.sessions[state.viewingSessionIdx];
+  const avg = sessionAverage(session);
+  const rows = session.items.map((it) => {
+    if (!it) return '';
+    return `
+      <tr>
+        <td style="text-align:left; padding:4px 8px;">${it.text}</td>
+        <td style="padding:4px 8px; color:${it.pass ? '#27ae60' : '#e74c3c'}; font-weight:bold;">${it.accuracy}점</td>
+        <td style="text-align:left; padding:4px 8px; color:#888; font-size:13px;">${it.pass ? '' : it.feedback}</td>
+      </tr>
+    `;
+  }).join('');
+  app.innerHTML = `
+    <p>${session.stageName} — 평균 ${avg}점</p>
+    <table style="width:100%; border-collapse:collapse; font-size:14px;">${rows}</table>
+    <br/>
+    <button class="big-btn" id="backBtn">결과 목록으로</button>
+  `;
+  document.getElementById('backBtn').onclick = () => { state.screen = 'history'; render(); };
+}
+
+function currentItem() {
+  return stages[state.stageIdx].items[state.itemIdx];
+}
+
+function renderListen() {
+  const stage = stages[state.stageIdx];
+  const item = currentItem();
+  const hasPrev = state.itemIdx > 0;
+  app.innerHTML = `
+    <div class="progress">${stage.name} · ${state.itemIdx + 1}/${stage.items.length}</div>
+    <div class="target-text">${item.text}</div>
+    <button class="big-btn" id="playBtn">🔊 듣기</button>
+    <br/>
+    <button class="secondary-btn" id="toListBtn">단계 목록으로</button>
+    ${hasPrev ? '<button class="secondary-btn" id="prevBtn">이전 문제</button>' : ''}
+    <button class="big-btn" id="toSpeakBtn">말하기 연습 →</button>
+  `;
+  document.getElementById('playBtn').onclick = () => speak(item.text);
+  document.getElementById('toListBtn').onclick = () => { state.screen = 'stageList'; render(); };
+  document.getElementById('toSpeakBtn').onclick = () => { state.screen = 'speak'; render(); };
+  if (hasPrev) {
+    document.getElementById('prevBtn').onclick = () => { state.itemIdx -= 1; render(); };
+  }
+  speak(item.text);
+}
+
+async function speak(text) {
+  try {
+    const tokenRes = await fetch('/api/get-token');
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok) throw new Error(tokenData.error || '토큰 발급 실패');
+
+    const speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(tokenData.token, tokenData.region);
+    speechConfig.speechSynthesisVoiceName = 'ko-KR-SunHiNeural';
+    const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig);
+    synthesizer.speakTextAsync(
+      text,
+      () => synthesizer.close(),
+      () => synthesizer.close()
+    );
+  } catch (e) {
+    console.error('TTS 오류:', e.message);
+  }
+}
+
+function renderSpeak() {
+  const stage = stages[state.stageIdx];
+  const item = currentItem();
+  app.innerHTML = `
+    <div class="progress">${stage.name} · ${state.itemIdx + 1}/${stage.items.length}</div>
+    <div class="target-text">${item.text}</div>
+    <button class="mic-btn" id="micBtn">🎤</button>
+    <div class="status" id="status">버튼을 눌러 말하기 시작, 다 말하면 한 번 더 눌러 끝내세요</div>
+    <br/>
+    <button class="secondary-btn" id="backBtn">← 다시 듣기</button>
+  `;
+  document.getElementById('backBtn').onclick = () => { state.screen = 'listen'; render(); };
+  document.getElementById('micBtn').onclick = () => {
+    if (state.recording) {
+      stopRecording();
+    } else {
+      startRecording(item.text);
+    }
+  };
+}
+
+async function startRecording(targetText) {
+  const micBtn = document.getElementById('micBtn');
+  const status = document.getElementById('status');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContextClass();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+
+    const chunks = [];
+    processor.onaudioprocess = (e) => {
+      chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+    source.connect(processor);
+    processor.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
+
+    state.recording = true;
+    state.recordingCtx = { stream, audioCtx, source, processor, silentGain, chunks, targetText };
+
+    micBtn.classList.add('listening');
+    micBtn.textContent = '⏹';
+    status.textContent = '녹음 중... 다 말하면 버튼을 다시 누르세요';
+  } catch (e) {
+    status.textContent = '마이크를 사용할 수 없어요: ' + e.message;
+  }
+}
+
+function stopRecording() {
+  const micBtn = document.getElementById('micBtn');
+  const status = document.getElementById('status');
+  if (!state.recording || !state.recordingCtx) return;
+  state.recording = false;
+  micBtn.classList.remove('listening');
+  micBtn.textContent = '⏳';
+  micBtn.disabled = true;
+  status.textContent = '채점 중...';
+
+  const { stream, audioCtx, source, processor, silentGain, chunks, targetText } = state.recordingCtx;
+  processor.disconnect();
+  source.disconnect();
+  silentGain.disconnect();
+  stream.getTracks().forEach((t) => t.stop());
+  const inputSampleRate = audioCtx.sampleRate;
+  audioCtx.close();
+
+  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  chunks.forEach((c) => { merged.set(c, offset); offset += c.length; });
+
+  const resampled = resampleTo16k(merged, inputSampleRate);
+  const wavBlob = encodeWav(resampled, 16000);
+  assessRecording(wavBlob, targetText);
+}
+
+function resampleTo16k(float32Array, inputSampleRate) {
+  if (inputSampleRate === 16000) return float32Array;
+  const ratio = inputSampleRate / 16000;
+  const newLength = Math.round(float32Array.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const srcIndex = i * ratio;
+    const i0 = Math.floor(srcIndex);
+    const i1 = Math.min(i0 + 1, float32Array.length - 1);
+    const frac = srcIndex - i0;
+    result[i] = float32Array[i0] * (1 - frac) + float32Array[i1] * frac;
+  }
+  return result;
+}
+
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
+}
+
+function encodeWav(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  let pos = 44;
+  for (let i = 0; i < samples.length; i++, pos += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(pos, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+function buildPronunciationHeader(referenceText) {
+  const params = {
+    ReferenceText: referenceText,
+    GradingSystem: 'HundredMark',
+    Granularity: 'Phoneme',
+    Dimension: 'Comprehensive',
+    EnableMiscue: true,
+  };
+  const utf8Bytes = new TextEncoder().encode(JSON.stringify(params));
+  let binary = '';
+  utf8Bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+}
+
+async function recognizeSpeech(blob, region, token, targetText, withAssessment) {
+  const url = `https://${region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=ko-KR&format=detailed`;
+  const headers = {
+    Authorization: 'Bearer ' + token,
+    'Content-Type': 'audio/wav; codecs=audio/pcm; samplerate=16000',
+    Accept: 'application/json',
+  };
+  if (withAssessment) headers['Pronunciation-Assessment'] = buildPronunciationHeader(targetText);
+  const res = await fetch(url, { method: 'POST', headers, body: blob });
+  return res.json();
+}
+
+function normalizeHangul(text) {
+  return (text || '').replace(/[^가-힣]/g, '');
+}
+
+// 한글 음절 하나를 초성/중성/종성으로 분해 (예: '막' -> ㅁ,ㅏ,ㄱ)
+const CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+const JUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
+const JONG = ['','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+
+function decomposeHangul(ch) {
+  const code = ch.charCodeAt(0) - 0xac00;
+  if (code < 0 || code > 11171) return null;
+  return {
+    cho: CHO[Math.floor(code / (21 * 28))],
+    jung: JUNG[Math.floor((code % (21 * 28)) / 28)],
+    jong: JONG[code % 28],
+  };
+}
+
+// 목표 글자와 인식된 글자를 초/중/종성 단위로 비교해 0~1 유사도를 계산
+function jamoSimilarity(target, recognized) {
+  const len = Math.max(target.length, recognized.length);
+  if (len === 0) return 0;
+  let totalSlots = 0;
+  let matchedSlots = 0;
+  for (let i = 0; i < len; i++) {
+    const td = target[i] ? decomposeHangul(target[i]) : null;
+    const rd = recognized[i] ? decomposeHangul(recognized[i]) : null;
+    if (!td && !rd) continue;
+    // 초성/중성은 항상 비교 대상
+    totalSlots += 2;
+    if (td && rd) {
+      if (td.cho === rd.cho) matchedSlots++;
+      if (td.jung === rd.jung) matchedSlots++;
+    }
+    // 받침은 둘 중 하나라도 있을 때만 비교 대상에 포함 (둘 다 없으면 비교할 정보가 없음)
+    const hasJong = (td && td.jong) || (rd && rd.jong);
+    if (hasJong) {
+      totalSlots += 1;
+      if (td && rd && td.jong === rd.jong) matchedSlots++;
+    }
+  }
+  return totalSlots ? matchedSlots / totalSlots : 0;
+}
+
+// 90점 미만(진짜 문제일 가능성이 높은 구간)일 때, Azure 응답의 세부 정보로 이유를 설명
+function explainLowScore(best, pronData) {
+  if (typeof pronData.SNR === 'number' && pronData.SNR < 20) {
+    return '소리가 작거나 주변이 시끄러워서 정확하게 듣기 어려웠어요. 조금 더 크고 또렷하게 말해보세요.';
+  }
+  if (typeof best.FluencyScore === 'number' && best.FluencyScore < 70) {
+    return '말이 자연스럽게 이어지지 않았어요. 더듬거나 끊기지 않게 말해보세요.';
+  }
+
+  return '받침이나 소리의 일부가 정확하지 않았어요. 또박또박 다시 말해보세요.';
+}
+
+async function assessRecording(blob, targetText) {
+  try {
+    const tokenRes = await fetch('/api/get-token');
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok) throw new Error(tokenData.error || '토큰 발급 실패');
+
+    // 같은 녹음을 두 번 보낸다: 목표 글자 없이(순수 인식)와 목표 글자를 알려주고(발음 채점)
+    const [plainData, pronData] = await Promise.all([
+      recognizeSpeech(blob, tokenData.region, tokenData.token, targetText, false),
+      recognizeSpeech(blob, tokenData.region, tokenData.token, targetText, true),
+    ]);
+    console.log('순수 인식 응답:', plainData);
+    console.log('발음 평가 응답:', pronData);
+
+    const plainBest = plainData.NBest && plainData.NBest[0];
+    const recognizedRaw = plainData.DisplayText || (plainBest && (plainBest.Display || plainBest.Lexical)) || '';
+    const recognizedText = normalizeHangul(recognizedRaw);
+
+    if (pronData.RecognitionStatus !== 'Success' || !pronData.NBest || !pronData.NBest.length) {
+      state.lastResult = { error: '소리를 인식하지 못했어요. 다시 시도해주세요.' };
+    } else {
+      const best = pronData.NBest[0];
+      const target = normalizeHangul(targetText);
+      const azureAccuracy = Math.round(best.AccuracyScore);
+
+      let accuracy;
+      let feedback;
+      let reason = '';
+      if (recognizedText && recognizedText === target) {
+        // 목표 글자를 정확히 말함 -> Azure의 세부 발음 점수를 신뢰하되,
+        // 90점대는 사람 귀로 구별 안 되는 노이즈로 보고 100점 처리 (진짜 문제인 낮은 점수만 이유를 보여줌)
+        if (azureAccuracy >= 90) {
+          accuracy = 100;
+          feedback = '아주 잘했어요! 👏';
+        } else {
+          accuracy = azureAccuracy;
+          feedback = accuracy >= 70 ? '아주 잘했어요! 👏' : '조금 더 연습해볼까요?';
+          reason = explainLowScore(best, pronData);
+        }
+      } else {
+        const similarity = jamoSimilarity(target, recognizedText);
+        if (similarity >= 0.5) {
+          // 비슷하지만 틀림 (예: 받침만 다름 - 막/망)
+          accuracy = Math.min(Math.round(similarity * 100), 69);
+          feedback = '발음이 틀렸어요';
+        } else {
+          // 아예 다른 자모/음절/단어
+          accuracy = Math.min(Math.round(similarity * 100), 19);
+          feedback = '목표 글자와 다른 소리예요. 다시 발음해보세요';
+        }
+      }
+
+      state.lastResult = {
+        accuracy,
+        recognizedText: recognizedText || '(인식 안 됨)',
+        pass: accuracy >= 70,
+        feedback,
+        reason,
+      };
+      if (state.currentSessionIdx !== null) {
+        state.sessions[state.currentSessionIdx].items[state.itemIdx] = {
+          text: currentItem().text,
+          accuracy,
+          pass: state.lastResult.pass,
+          feedback: reason || feedback,
+        };
+      }
+    }
+  } catch (e) {
+    state.lastResult = { error: '오류: ' + e.message };
+  }
+  state.screen = 'result';
+  render();
+}
+
+function renderResult(result) {
+  const stage = stages[state.stageIdx];
+  const item = currentItem();
+  const isLast = state.itemIdx === stage.items.length - 1;
+
+  if (result.error) {
+    app.innerHTML = `
+      <div class="target-text">${item.text}</div>
+      <div class="feedback">${result.error}</div>
+      <button class="big-btn" id="retryBtn">다시 시도</button>
+    `;
+    document.getElementById('retryBtn').onclick = () => { state.screen = 'speak'; render(); };
+    return;
+  }
+
+  app.innerHTML = `
+    <div class="target-text">${item.text}</div>
+    <div class="score ${result.pass ? 'pass' : 'fail'}">${result.accuracy}점</div>
+    <div class="feedback">${result.feedback}</div>
+    ${result.reason ? `<div style="color:#888; font-size:14px; margin-bottom:8px;">${result.reason}</div>` : ''}
+    <div style="color:#999; font-size:14px;">인식된 소리: ${result.recognizedText || '(없음)'}</div>
+    <br/>
+    <button class="secondary-btn" id="retryBtn">다시 시도</button>
+    <button class="big-btn" id="nextBtn">${isLast ? '단계 목록으로' : '다음 문제'}</button>
+  `;
+  document.getElementById('retryBtn').onclick = () => { state.screen = 'speak'; render(); };
+  document.getElementById('nextBtn').onclick = () => {
+    if (isLast) {
+      state.screen = 'stageList';
+    } else {
+      state.itemIdx += 1;
+      state.screen = 'listen';
+    }
+    render();
+  };
+}
+
+render();
+</script>
+</body>
+</html>
