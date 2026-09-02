@@ -153,10 +153,14 @@
     gap: 8px;
   }
   .data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  /* word-break: keep-all - 한글은 기본적으로 음절(글자)마다 줄바꿈이 될 수 있어서 "다문화" 같은
+     한 단어(어절)도 칸이 좁으면 "다문/화"처럼 글자 중간에서 잘려 보인다. keep-all을 주면
+     띄어쓰기(또는 <br/>)가 있는 자리에서만 줄이 바뀌고, 단어 중간에서는 바뀌지 않는다. */
   .data-table th, .data-table td {
     padding: 10px 8px;
     border-bottom: 1px solid var(--border);
-    text-align: left;
+    text-align: center;
+    word-break: keep-all;
   }
   .data-table th { color: var(--text-muted); font-weight: 600; font-size: 13px; }
   .pill-btn {
@@ -166,6 +170,7 @@
     border: 1px solid var(--border);
     background: white;
     cursor: pointer;
+    word-break: keep-all;
   }
   .pill-btn:hover { background: #f9fafb; }
   .pill-btn.danger { color: #dc2626; border-color: #fecaca; }
@@ -237,7 +242,7 @@
 </style>
 </head>
 <body>
-  <div class="topbar"><div class="logo">한글<span>또박</span> 발음 지도</div></div>
+  <div class="topbar"><div class="logo" id="logoBtn" style="cursor:pointer;">한글<span>또박</span> 발음 지도</div></div>
   <main>
     <div class="card" id="app"></div>
   </main>
@@ -531,10 +536,14 @@ function renderStudentList() {
   const cls = currentClass();
   const rows = cls.students.map((s, i) => {
     const avg = studentAverage(s);
+    const level = achievementTier(computeStudentStats(s));
     return `
       <tr>
         <td>${s.number}</td>
-        <td><input type="text" value="${escapeHtml(s.name)}" data-name-idx="${i}" placeholder="이름" style="border:none; background:transparent; width:100%; padding:4px;" /></td>
+        <td>
+          <input type="text" value="${escapeHtml(s.name)}" data-name-idx="${i}" placeholder="이름" style="border:none; background:transparent; width:100%; padding:4px; text-align:center;" />
+          <div>${levelBadgeHtml(level)}</div>
+        </td>
         <td style="text-align:center;"><input type="checkbox" data-multicultural-idx="${i}" ${s.multicultural ? 'checked' : ''} /></td>
         <td style="text-align:center;"><input type="checkbox" data-basic-support-idx="${i}" ${s.basic_support ? 'checked' : ''} /></td>
         <td>${avg === null ? '-' : avg + '점'}</td>
@@ -770,9 +779,11 @@ function renderHistory() {
     app.innerHTML = `
       <p>아직 시도한 기록이 없어요</p>
       <button class="secondary-btn" id="closeBtn">단계 목록으로</button>
+      <button class="secondary-btn" id="reportBtn">리포트</button>
       <button class="big-btn" id="toStudentListBtn">학생 목록으로</button>
     `;
     document.getElementById('closeBtn').onclick = () => { state.screen = 'stageList'; render(); };
+    document.getElementById('reportBtn').onclick = () => { openReportForCurrentStudent(); };
     document.getElementById('toStudentListBtn').onclick = () => { state.screen = 'studentList'; render(); };
     return;
   }
@@ -799,6 +810,7 @@ function renderHistory() {
     ${rows}
     <br/>
     <button class="secondary-btn" id="closeBtn">단계 목록으로</button>
+    <button class="secondary-btn" id="reportBtn">리포트</button>
     <button class="big-btn" id="toStudentListBtn">학생 목록으로</button>
   `;
   app.querySelectorAll('[data-group-idx]').forEach((el) => {
@@ -817,7 +829,20 @@ function renderHistory() {
     };
   });
   document.getElementById('closeBtn').onclick = () => { state.screen = 'stageList'; render(); };
+  document.getElementById('reportBtn').onclick = () => { openReportForCurrentStudent(); };
   document.getElementById('toStudentListBtn').onclick = () => { state.screen = 'studentList'; render(); };
+}
+
+// "검사 결과" 화면(renderHistory)에서 "리포트" 버튼을 눌렀을 때 쓴다. 학생 목록 화면의 "리포트"
+// 버튼(data-report)과 똑같이, 지금 보고 있는 학생(state.currentStudentId) 기준으로 인쇄용
+// 리포트 화면(renderReport)에 필요한 state를 채운 뒤 이동한다.
+function openReportForCurrentStudent() {
+  const cls = currentClass();
+  const student = cls.students.find((s) => s.id === state.currentStudentId);
+  state.reportStudent = student;
+  state.reportClassName = cls.name;
+  state.screen = 'report';
+  render();
 }
 
 // 한 단계를 여러 번 시도했을 때, 그중 어떤 시도를 볼지 고르는 중간 화면.
@@ -880,10 +905,10 @@ function renderSessionDetail() {
     `;
     return `
       <tr>
-        <td class="left">${it.text}</td>
+        <td>${it.text}</td>
         <td style="color:${it.pass ? '#27ae60' : '#e74c3c'}; font-weight:bold;">${it.accuracy}점</td>
-        <td class="left">${recognizedCell}</td>
-        <td class="left">${errorCell}</td>
+        <td>${recognizedCell}</td>
+        <td>${errorCell}</td>
       </tr>
     `;
   }).join('');
@@ -892,10 +917,10 @@ function renderSessionDetail() {
     <table class="report-table">
       <thead>
         <tr>
-          <th class="left">문항</th>
+          <th>문항</th>
           <th>점수</th>
-          <th class="left">인식된 소리</th>
-          <th class="left">오류 내용</th>
+          <th>인식된 소리</th>
+          <th>오류 내용</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -975,21 +1000,23 @@ const STAGE_ADVICE = {
 const KO_ORDINALS = ['가', '나', '다', '라', '마', '바', '사', '아', '자', '차'];
 
 // stageRows(renderReport에서 계산한 단계별 결과)를 보고, "보완 필요"로 나온 단계마다
-// "N. 단계명" 큰 항목 + "가/나/다..." 하위 항목(기본 지도 원리 + 오류 유형별 설명) 구조의
-// HTML을 만든다. 보완 필요한 단계가 없으면 칭찬 문구 하나만 보여준다.
+// "단계명"(예: "6. 대표받침" - stages 배열에 이미 번호가 붙어 있음) 큰 항목 + "가/나/다..."
+// 하위 항목(기본 지도 원리 + 오류 유형별 설명) 구조의 HTML을 만든다. 앞에 항목 번호(1, 2...)를
+// 따로 붙이면 stageName에 이미 있는 번호와 겹쳐 보인다는 피드백(2026-09-03)을 받아 뺐다.
+// 보완 필요한 단계가 없으면 칭찬 문구 하나만 보여준다.
 function renderAdviceSection(stageRows) {
   const failed = stageRows.filter((r) => r.tried && !r.passed);
   if (!failed.length) {
     return `<p style="margin:4px 0;">지금까지 실시한 항목에서는 특별히 보완할 부분이 보이지 않아요. 다음 단계로 진행해도 좋아요.</p>`;
   }
-  return failed.map((r, i) => {
+  return failed.map((r) => {
     const subItems = [STAGE_ADVICE[r.stageName] || `${r.stageName}에서 보완이 필요해요.`, ...summarizeErrorTypes(r.wrongItems)];
     const subRows = subItems.map((text, j) => `
       <p style="margin:3px 0 3px 20px;">${KO_ORDINALS[j] || j + 1}. ${text}</p>
     `).join('');
     return `
       <div style="margin-bottom:10px;">
-        <p style="margin:0; font-weight:600;">${i + 1}. ${r.stageName}</p>
+        <p style="margin:0; font-weight:600;">${r.stageName}</p>
         ${subRows}
       </div>
     `;
@@ -1128,24 +1155,62 @@ function renderChart(canvasId, config) {
   new Chart(canvas, config);
 }
 
-// 반 하나(cls)의 통계를 계산한다. 학생별로 "지금까지 실시한 모든 문항의 평균"과 "단계별
-// 가장 최근 시도의 평균"을 먼저 구해두고, 그 값들을 학급 전체/다문화 학생/기초학습지원대상
-// 학생 단위로 다시 평균 내는 방식이다.
-function computeClassStats(cls) {
-  const studentStats = cls.students.map((s) => {
-    const allScores = (s.sessions || []).flatMap((sess) => sess.items.filter(Boolean).map((it) => it.accuracy));
-    const overallAvg = allScores.length ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : null;
-    const stageAvgs = stages.map((stage) => {
-      const attempts = (s.sessions || []).filter((sess) => sess.stageName === stage.name && sess.items.some(Boolean));
-      if (!attempts.length) return null;
-      return sessionAverage(attempts[attempts.length - 1]);
-    });
-    const lastCreatedAt = (s.sessions || []).reduce((latest, sess) => {
-      if (!sess.items.some(Boolean)) return latest;
-      return !latest || sess.createdAt > latest ? sess.createdAt : latest;
-    }, null);
-    return { student: s, overallAvg, stageAvgs, lastCreatedAt, tried: allScores.length > 0 };
+// 학생 한 명의 통계("지금까지 실시한 모든 문항의 평균"과 "단계별 가장 최근 시도의 평균")를 계산한다.
+// 학급 통계(computeClassStats)와 학생 목록 화면(renderStudentList의 해득수준 배지)이 똑같은 계산을
+// 공유해서 쓴다.
+function computeStudentStats(s) {
+  const allScores = (s.sessions || []).flatMap((sess) => sess.items.filter(Boolean).map((it) => it.accuracy));
+  const stageAvgs = stages.map((stage) => {
+    const attempts = (s.sessions || []).filter((sess) => sess.stageName === stage.name && sess.items.some(Boolean));
+    if (!attempts.length) return null;
+    return sessionAverage(attempts[attempts.length - 1]);
   });
+  const lastCreatedAt = (s.sessions || []).reduce((latest, sess) => {
+    if (!sess.items.some(Boolean)) return latest;
+    return !latest || sess.createdAt > latest ? sess.createdAt : latest;
+  }, null);
+  return { student: s, stageAvgs, lastCreatedAt, tried: allScores.length > 0 };
+}
+
+// 해득수준 4분류 (2026-09-02, 위키 07/08 참고자료를 근거로 구체화):
+// 예전에는 "지금까지 푼 모든 문항의 평균 점수"만 보고 70/50점 경계로 나눴는데, 이러면 1단계
+// (모음)만 풀고 100점 받은 학생과 6단계를 전부 통과한 학생이 똑같이 "해득"으로 묶이는 문제가
+// 있었다. 찬찬한글(위키 08)의 학습 순서(모음→자음→받침없는단어→이중모음→이중모음단어→
+// 대표받침)는 위계가 있고, 마지막에 전 단계를 다 통과했는지 보는 "최종평가" 개념이 있다.
+// 그래서 지금은 "어느 단계까지 올라갔는지"를 함께 봐서 아래처럼 나눈다.
+// - 해득: 6단계 전부 시도했고 전부 70점 이상 도달 (찬찬한글의 "최종평가 통과"에 해당)
+// - 미해득: 가장 기초인 모음/자음 단계부터 70점 미만 (발음지도 자료 - 위키 07 - 가 강조하는
+//   "소리를 지도하는 순서"의 첫 단추부터 안 잡힌 상태라, 뒷단계를 아직 안 했어도 미해득으로 본다)
+// - 보충: 미검사도 미해득도 아닌 나머지 (기초는 통과했지만 아직 6단계를 다 마치지 못했거나,
+//   중간 단계에서 70점 미만이 있어 계속 연습이 필요한 상태)
+// - 미검사: 세션 기록이 하나도 없음
+function achievementTier(x) {
+  if (!x.tried) return '미검사';
+  const allStagesPassed = x.stageAvgs.every((avg) => avg !== null && avg >= 70);
+  // stageAvgs[0]=모음, stageAvgs[1]=자음 (stages 배열의 앞 두 단계)
+  const foundationFailed = x.stageAvgs.slice(0, 2).some((avg) => avg !== null && avg < 70);
+  if (allStagesPassed) return '해득';
+  if (foundationFailed) return '미해득';
+  return '보충';
+}
+
+// 해득수준 배지에 쓸 색상. 미해득은 빨강, 미검사는 회색으로 눈에 띄게 하고(2026-09-03 요청),
+// 해득/보충은 학급통계 파이차트와 같은 계열의 초록/주황 톤을 맞췄다.
+const LEVEL_BADGE_COLORS = {
+  해득: { bg: '#dcfce7', color: '#16a34a' },
+  보충: { bg: '#fef3c7', color: '#92400e' },
+  미해득: { bg: '#fee2e2', color: '#dc2626' },
+  미검사: { bg: '#f3f4f6', color: '#6b7280' },
+};
+function levelBadgeHtml(level) {
+  const c = LEVEL_BADGE_COLORS[level];
+  return `<span class="error-tag" style="background:${c.bg}; color:${c.color};">${level}</span>`;
+}
+
+// 반 하나(cls)의 통계를 계산한다. 학생별 통계를 먼저 구해두고, 그 값들을 학급 전체/다문화
+// 학생/기초학습지원대상 학생 단위로 다시 평균 내는 방식이다.
+function computeClassStats(cls) {
+  const studentStats = cls.students.map(computeStudentStats);
 
   const triedCount = studentStats.filter((x) => x.tried).length;
   const notTriedNumbers = studentStats.filter((x) => !x.tried).map((x) => x.student.number);
@@ -1154,15 +1219,8 @@ function computeClassStats(cls) {
     null
   );
 
-  // 해득수준 4분류: 미검사(한 번도 안 함) / 미해득(<50점) / 보충(50~69점) / 해득(70점 이상,
-  // 우리 앱의 기존 '합격' 기준과 통일).
   const levelCounts = { 해득: 0, 보충: 0, 미해득: 0, 미검사: 0 };
-  studentStats.forEach((x) => {
-    if (!x.tried) levelCounts['미검사']++;
-    else if (x.overallAvg >= 70) levelCounts['해득']++;
-    else if (x.overallAvg >= 50) levelCounts['보충']++;
-    else levelCounts['미해득']++;
-  });
+  studentStats.forEach((x) => { levelCounts[achievementTier(x)]++; });
 
   // filterFn을 만족하는 학생들만 골라서, 6단계 각각의 학급(집단) 평균을 구한다.
   // (그 단계를 아무도 안 했으면 null - Chart.js가 그 막대만 비워서 그려준다)
@@ -1191,7 +1249,7 @@ function computeClassStats(cls) {
       });
     });
     tagsForThisStudent.forEach((tag) => {
-      (errorTypeStudents[tag] = errorTypeStudents[tag] || []).push(`${s.number}. ${s.name ? escapeHtml(s.name) : '(이름 없음)'}`);
+      (errorTypeStudents[tag] = errorTypeStudents[tag] || []).push(s.name ? escapeHtml(s.name) : '(이름 없음)');
     });
   });
 
@@ -1226,15 +1284,25 @@ function classBarChartConfig(data) {
   };
 }
 
-// computeClassStats가 만든 errorTypeStudents({태그: [학생 목록]})를,
-// "받침 탈락: 3. 김상혁, 7. 이지은" 형태의 목록 HTML로 만든다. 태그 순서는 ERROR_TAG_ADVICE에
-// 정의된 순서를 그대로 따라서, 화면을 다시 그릴 때마다 순서가 들쭉날쭉하지 않게 한다.
+// computeClassStats가 만든 errorTypeStudents({태그: [학생 이름 목록]})를 표로 만든다. 알약(배지)
+// 모양 대신 다른 표들과 같은 깔끔한 일반 텍스트로 보여준다(2026-09-03 피드백 반영). 태그 순서는
+// ERROR_TAG_ADVICE에 정의된 순서를 그대로 따라서, 화면을 다시 그릴 때마다 순서가 들쭉날쭉하지
+// 않게 한다.
 function renderErrorTypeStudents(errorTypeStudents) {
   const tags = Object.keys(ERROR_TAG_ADVICE).filter((tag) => errorTypeStudents[tag] && errorTypeStudents[tag].length);
   if (!tags.length) return '<p class="hint">아직 발견된 오류 유형이 없어요.</p>';
-  return tags.map((tag) => `
-    <p style="margin:8px 0;"><span class="error-tag">${tag}</span> ${errorTypeStudents[tag].join(', ')}</p>
+  const rows = tags.map((tag) => `
+    <tr>
+      <td>${tag}</td>
+      <td>${errorTypeStudents[tag].join(', ')}</td>
+    </tr>
   `).join('');
+  return `
+    <table class="report-table">
+      <thead><tr><th>오류 유형</th><th>학생</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function renderClassStats() {
@@ -1270,6 +1338,11 @@ function renderClassStats() {
       <div class="stats-chart-box">
         <p class="section-title">한글 해득수준 비율</p>
         ${chartOrFallback('chartLevel')}
+        <div style="margin-top:10px; font-size:12px; color:var(--text-muted); line-height:1.6;">
+          <p style="margin:2px 0;"><b>해득</b>: 6단계(모음~대표받침)를 모두 마치고 전부 70점 이상 도달</p>
+          <p style="margin:2px 0;"><b>보충</b>: 모음·자음은 통과했지만 아직 전 단계를 다 마치지 못했거나 중간 단계에서 70점 미만이 있음</p>
+          <p style="margin:2px 0;"><b>미해득</b>: 모음·자음처럼 가장 기초 단계부터 70점 미만</p>
+        </div>
       </div>
     </div>
 
@@ -1906,6 +1979,14 @@ function goToNextItem(isLast) {
   }
   render();
 }
+
+// 상단 "한글또박 발음 지도" 제목을 누르면 로그인 이후 첫 화면(반 목록)으로 돌아간다.
+// 로그인 전(state.teacherId가 없음)에는 아무 반 데이터가 없어 이동할 곳이 없으므로 무시한다.
+document.getElementById('logoBtn').onclick = () => {
+  if (!state.teacherId) return;
+  state.screen = 'classList';
+  render();
+};
 
 // 페이지가 로드될 때 이미 로그인된 세션이 있는지 먼저 확인한다.
 // 두 가지 경우에 세션이 이미 있을 수 있다: ① 구글 로그인 화면에서 방금 돌아온 직후
