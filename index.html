@@ -74,7 +74,12 @@
     font-weight: 700;
     color: var(--text);
     margin: 24px 0;
+    word-break: keep-all;
   }
+  /* 문장(7단계)/짧은 문단(8단계)처럼 글자 수가 많은 문항은 64px 그대로 쓰면 좁은 카드(480px) 밖으로
+     넘치므로, 길이에 따라 글자 크기를 단계적으로 줄인다 (renderPractice가 붙여준다). */
+  .target-text.long { font-size: 30px; }
+  .target-text.paragraph { font-size: 22px; line-height: 1.6; text-align: left; }
   .big-btn {
     font-size: 15px;
     font-weight: 600;
@@ -249,10 +254,16 @@
 
 <script>
 // ===== 문항 데이터 =====
-// 학습 단계(모음 → 자음 → 받침없는 단어 → 이중모음 → 이중모음 단어 → 대표받침) 순서로 정의한다
-// (순서와 이유는 llm-wiki/09-앱-설계-개요.md 참고). 각 단계는 이름(name)과 문항 목록(items)을 갖고,
-// items의 각 항목은 { text: '화면에 보여줄 글자' } 형태다. 실제 검사에서는 이 목록 전체를 다 쓰지 않고
-// shuffle()로 섞은 뒤 일부만 뽑아서 쓴다 (renderStageList 참고).
+// 학습 단계(모음 → 자음 → 받침없는 단어 → 이중모음 → 이중모음 단어 → 대표받침 → 문장 → 짧은 문단)
+// 순서로 정의한다 (순서와 이유는 llm-wiki/09-앱-설계-개요.md 참고). 각 단계는 이름(name)과 문항
+// 목록(items)을 갖고, items의 각 항목은 { text: '화면에 보여줄 글자' } 형태다. 실제 검사에서는
+// 이 목록 전체를 다 쓰지 않고 shuffle()로 섞은 뒤 일부만 뽑아서 쓴다 (renderStageList 참고).
+// compositeScoring: true가 붙은 단계(7, 8단계)는 채점 방식이 다르다 - 1~6단계는 목표 글자와
+// 정확히 일치해야만 Azure 세부 점수를 신뢰하고, 안 맞으면 초성/중성/받침을 직접 비교해서 채점하는데
+// (assessRecording 참고), 문장·문단은 자연스러운 억양·연음(예: "손이"가 "소니"로 들리는 것)이
+// 정상이라 이 엄격한 방식을 그대로 쓰면 오히려 정상 발화를 오답으로 채점하게 된다. 그래서 이
+// 두 단계는 Azure가 문장 단위 발화에 맞춰 계산해주는 종합 발음 점수(PronScore)를 그대로 신뢰하는
+// 방식으로 시작한다(2026-09-03, 사용자 확정 - 나중에 필요하면 더 정교하게 다듬을 수 있음).
 const stages = [
   { name: '1. 모음', items: [
       '아', '어', '오', '우', '으', '이', '야', '여', '요', '유',
@@ -272,6 +283,17 @@ const stages = [
     ].map((text) => ({ text })) },
   { name: '6. 대표받침', items: [
       '막', '국', '눈', '손', '곧', '물', '달', '김', '몸', '밥', '집', '강', '공',
+    ].map((text) => ({ text })) },
+  { name: '7. 문장', compositeScoring: true, items: [
+      '나비가 날아가요', '아기가 잠을 자요', '고양이가 우유를 마셔요', '오리가 강가에서 놀아요',
+      '친구와 공을 차요', '우리는 학교에 가요', '강아지가 밥을 먹어요', '하늘이 아주 맑아요',
+    ].map((text) => ({ text })) },
+  { name: '8. 짧은 문단', compositeScoring: true, items: [
+      '나비가 꽃밭에서 날아다녀요. 나비는 알록달록 예뻐요.',
+      '아침에 일어나서 세수를 해요. 그리고 밥을 먹어요.',
+      '오늘은 날씨가 맑아요. 친구들과 밖에서 놀았어요.',
+      '강아지와 산책을 해요. 강아지는 신나서 뛰어다녀요.',
+      '저녁에 가족과 함께 밥을 먹어요. 정말 행복한 시간이에요.',
     ].map((text) => ({ text })) },
 ];
 
@@ -715,7 +737,7 @@ function handleExcelUpload(e, cls) {
 }
 
 // 학습 단계 목록 화면: 학생을 고르고 들어온 경우 그 학생 이름을 상단에 보여주고,
-// stages 배열에 정의된 6개 단계를 버튼으로 나열한다. 단계 버튼을 누르면 그 단계 문항 중
+// stages 배열에 정의된 단계를 전부 버튼으로 나열한다. 단계 버튼을 누르면 그 단계 문항 중
 // 무작위로 최대 5개를 뽑아 새 검사 세션을 시작한다 (아래 stage-btn 클릭 핸들러 참고).
 function renderStageList() {
   const cls = currentClass();
@@ -993,6 +1015,8 @@ const STAGE_ADVICE = {
   '4. 이중모음': '복잡한 모음(이중모음)은 기본 모음보다 어려운 단계예요(찬찬한글 4단원). 입 모양이 바뀌는 이중모음(예: ㅘ, ㅝ)을 천천히 끊어서 발음한 뒤 이어 붙여 읽는 연습시켜보세요.',
   '5. 이중모음 단어': '이중모음이 들어간 단어 읽기에서 어려움을 보였어요(찬찬한글 5단원). 4단원(이중모음 낱자)을 먼저 확실히 다진 뒤, 짧은 단어부터 다시 연습시켜보세요.',
   '6. 대표받침': '대표받침(ㄱㄴㄷㄹㅁㅂㅇ) 7개를 소리와 표기가 일치하는 낱말부터 하나씩 확인해요(찬찬한글 6~7단원). 받침 소리를 살짝 과장해서 들려주며 연습시켜보세요.',
+  '7. 문장': '이제부터는 한 글자가 아니라 문장 전체를 자연스럽게 읽는 유창성이 중요해요. 짧게 끊어서 정확히 읽는 연습을 먼저 시키고, 익숙해지면 문장 전체를 이어서 읽는 연습시켜보세요.',
+  '8. 짧은 문단': '문장 두세 개를 이어 읽으며 흐름을 유지하는 단계예요. 문장 하나씩 먼저 또박또박 읽힌 뒤, 문장 사이를 자연스럽게 이어 읽는 연습시켜보세요.',
 };
 
 // 한 자리 숫자 정도의 하위 항목에 쓸 한글 순서 표시(가,나,다...). list-style-type의 한글 지원은
@@ -1172,6 +1196,12 @@ function computeStudentStats(s) {
   return { student: s, stageAvgs, lastCreatedAt, tried: allScores.length > 0 };
 }
 
+// "한글 해득"은 자모~대표받침(1~6단계, 기초 문식성)을 기준으로 판정한다. 7·8단계(문장/짧은 문단)는
+// 그 이후의 읽기 유창성 단계라서, 나중에 이 배열에 단계를 더 추가하더라도(예: 받침가족·겹받침)
+// "해득" 판정 기준이 저절로 늘어나 학생들이 갑자기 전부 미해득으로 떨어지는 일이 없도록 숫자를
+// stages 배열 길이가 아니라 이 상수로 고정해서 관리한다.
+const CORE_LITERACY_STAGE_COUNT = 6;
+
 // 해득수준 4분류 (2026-09-02, 위키 07/08 참고자료를 근거로 구체화):
 // 예전에는 "지금까지 푼 모든 문항의 평균 점수"만 보고 70/50점 경계로 나눴는데, 이러면 1단계
 // (모음)만 풀고 100점 받은 학생과 6단계를 전부 통과한 학생이 똑같이 "해득"으로 묶이는 문제가
@@ -1186,9 +1216,10 @@ function computeStudentStats(s) {
 // - 미검사: 세션 기록이 하나도 없음
 function achievementTier(x) {
   if (!x.tried) return '미검사';
-  const allStagesPassed = x.stageAvgs.every((avg) => avg !== null && avg >= 70);
-  // stageAvgs[0]=모음, stageAvgs[1]=자음 (stages 배열의 앞 두 단계)
-  const foundationFailed = x.stageAvgs.slice(0, 2).some((avg) => avg !== null && avg < 70);
+  const coreStageAvgs = x.stageAvgs.slice(0, CORE_LITERACY_STAGE_COUNT);
+  const allStagesPassed = coreStageAvgs.every((avg) => avg !== null && avg >= 70);
+  // coreStageAvgs[0]=모음, coreStageAvgs[1]=자음 (stages 배열의 앞 두 단계)
+  const foundationFailed = coreStageAvgs.slice(0, 2).some((avg) => avg !== null && avg < 70);
   if (allStagesPassed) return '해득';
   if (foundationFailed) return '미해득';
   return '보충';
@@ -1222,7 +1253,7 @@ function computeClassStats(cls) {
   const levelCounts = { 해득: 0, 보충: 0, 미해득: 0, 미검사: 0 };
   studentStats.forEach((x) => { levelCounts[achievementTier(x)]++; });
 
-  // filterFn을 만족하는 학생들만 골라서, 6단계 각각의 학급(집단) 평균을 구한다.
+  // filterFn을 만족하는 학생들만 골라서, 단계마다 학급(집단) 평균을 구한다.
   // (그 단계를 아무도 안 했으면 null - Chart.js가 그 막대만 비워서 그려준다)
   function stageAverages(filterFn) {
     const filtered = studentStats.filter(filterFn);
@@ -1268,7 +1299,7 @@ function computeClassStats(cls) {
   };
 }
 
-// 6단계 이름을 라벨로, data 배열을 값으로 쓰는 학급 평균 막대그래프 설정을 만든다 (재사용).
+// 각 단계 이름을 라벨로, data 배열을 값으로 쓰는 학급 평균 막대그래프 설정을 만든다 (재사용).
 function classBarChartConfig(data) {
   return {
     type: 'bar',
@@ -1412,9 +1443,11 @@ function renderPractice() {
   const stage = stages[state.stageIdx];
   const item = currentItem();
   const hasPrev = state.itemIdx > 0;
+  // 문장/문단처럼 글자 수가 많은 문항은 기본 64px 글자 크기로 두면 카드 밖으로 넘치므로 줄인다.
+  const textSizeClass = item.text.length > 20 ? 'paragraph' : item.text.length > 8 ? 'long' : '';
   app.innerHTML = `
     <div class="progress">${stage.name} · ${state.itemIdx + 1}/${state.sessionItems.length}</div>
-    <div class="target-text">${item.text}</div>
+    <div class="target-text ${textSizeClass}">${item.text}</div>
     <button class="big-btn" id="playBtn">🔊 듣기</button>
     <br/>
     <button class="mic-btn" id="micBtn">🎤</button>
@@ -1760,6 +1793,11 @@ function analyzeError(it) {
   // 인식된 소리를 기록하지 않던 예전 버전이라 그런 것이라, 유형을 알아낼 방법이 없다.
   if (typeof it.recognizedText !== 'string') return ['(예전 기록)'];
   if (!it.recognizedText) return ['인식 실패'];
+  // 문장/문단 문항(띄어쓰기가 있음)은 Azure 종합 점수만 신뢰하는 방식이라(assessRecording,
+  // compositeScoring 참고), 아래처럼 음절 자리를 하나하나 맞대어 비교하면 문장 중간에 음절
+  // 하나만 밀려도 뒤 음절이 전부 어긋난 것처럼 잘못 진단될 수 있다. 그래서 세부 태그 대신
+  // 뭉뚱그린 태그 하나만 붙인다 (2026-09-03, 문장 단계 도입과 함께 추가).
+  if (it.text.includes(' ')) return ['유창성/발음 문제'];
 
   const target = normalizeHangul(it.text);
   const recognized = normalizeHangul(it.recognizedText);
@@ -1799,6 +1837,7 @@ const ERROR_TAG_ADVICE = {
   '중성(모음) 오류': (items) => `${quoteItems(items)}에서 중성(모음) 자체를 다른 소리로 냈어요. 입 모양과 밝은 소리·어두운 소리 차이를 천지인 원리로 설명하며 비교 연습시켜보세요.`,
   '음절 수 오류': (items) => `${quoteItems(items)}에서 음절 수 자체가 달라졌어요. 글자를 하나씩 손으로 짚어가며 음절 수만큼 정확히 끊어 읽는 연습시켜보세요.`,
   '유창성/음량 문제': (items) => `${quoteItems(items)}은(는) 글자는 정확히 발음했지만 목소리 크기·유창성에서 감점됐어요. 조금 더 크고 끊기지 않게 이어 말하는 연습시켜보세요.`,
+  '유창성/발음 문제': (items) => `${quoteItems(items)}에서 종합 발음 점수가 낮게 나왔어요. 문장을 천천히 끊어서 또박또박 읽어보게 하고, 잘 안 되는 부분만 따로 짧게 반복 연습시켜보세요.`,
   '읽지 못함': (items) => `${quoteItems(items)}은(는) 아예 읽지 못했어요. 글자를 다시 들려주고 따라 말하는 것부터 연습시켜보세요.`,
   '인식 실패': (items) => `${quoteItems(items)}은(는) 녹음에서 소리 자체가 인식되지 않았어요. 마이크에 더 가까이, 더 또렷하게 말하도록 연습시켜보세요.`,
   '(예전 기록)': (items) => `${quoteItems(items)}은(는) 예전 기록이라 정확한 오류 유형을 알 수 없어요. 다시 검사해서 확인해보세요.`,
@@ -1854,7 +1893,14 @@ async function assessRecording(blob, targetText) {
       let accuracy;
       let feedback;
       let reason = '';
-      if (recognizedText && recognizedText === target) {
+      if (stages[state.stageIdx].compositeScoring) {
+        // 문장/문단 단계(7, 8단계): 음절 단위로 정확히 일치하는지 따지는 아래 분기 대신, Azure가
+        // 문장 전체 발화에 맞춰 계산해주는 종합 발음 점수(PronScore, 없으면 AccuracyScore로
+        // 대체)를 그대로 쓴다 (이유는 stages 배열 위 주석 참고).
+        accuracy = Math.round(typeof best.PronScore === 'number' ? best.PronScore : azureAccuracy);
+        feedback = accuracy >= 70 ? '아주 잘했어요! 👏' : '조금 더 또박또박 읽어볼까요?';
+        if (accuracy < 70) reason = explainLowScore(best, pronData);
+      } else if (recognizedText && recognizedText === target) {
         // 목표 글자를 정확히 말함 -> Azure의 세부 발음 점수를 신뢰하되,
         // 90점대는 사람 귀로 구별 안 되는 노이즈로 보고 100점 처리 (진짜 문제인 낮은 점수만 이유를 보여줌)
         if (azureAccuracy >= 90) {
