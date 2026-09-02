@@ -5,23 +5,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>발음 지도 앱</title>
 <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   * { box-sizing: border-box; }
+  :root {
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --text: #1f2937;
+    --text-muted: #6b7280;
+    --border: #e5e7eb;
+    --bg: #f3f4f6;
+  }
   body {
-    font-family: 'Malgun Gothic', sans-serif;
-    background: #fdf6ec;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif;
+    background: var(--bg);
     margin: 0;
-    padding: 20px;
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .topbar {
+    background: white;
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+  }
+  .topbar .logo { font-size: 17px; font-weight: 700; color: var(--text); }
+  .topbar .logo span { color: var(--primary); }
+  main {
     display: flex;
     flex-direction: column;
     align-items: center;
-    min-height: 100vh;
+    padding: 32px 20px;
   }
-  h1 { color: #5a4632; font-size: 24px; }
   .card {
     background: white;
-    border-radius: 20px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
     padding: 32px;
     width: 100%;
     max-width: 480px;
@@ -30,115 +51,490 @@
   .stage-btn {
     display: block;
     width: 100%;
-    margin: 8px 0;
-    padding: 16px;
-    font-size: 18px;
-    border-radius: 12px;
-    border: 2px solid #d9c9a8;
-    background: #fff9ef;
+    margin: 6px 0;
+    padding: 14px 16px;
+    font-size: 16px;
+    text-align: left;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--text);
     cursor: pointer;
   }
-  .stage-btn:hover { background: #ffe9b8; }
+  .stage-btn:hover { background: #eff6ff; border-color: var(--primary); }
   .target-text {
-    font-size: 72px;
-    font-weight: bold;
-    color: #3a2f22;
+    font-size: 64px;
+    font-weight: 700;
+    color: var(--text);
     margin: 24px 0;
   }
   .big-btn {
-    font-size: 20px;
-    padding: 16px 28px;
-    border-radius: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 12px 24px;
+    border-radius: 6px;
     border: none;
-    background: #ff9f45;
+    background: var(--primary);
     color: white;
     cursor: pointer;
     margin: 8px;
   }
-  .big-btn:hover { background: #ff8c1a; }
+  .big-btn:hover { background: var(--primary-dark); }
   .secondary-btn {
-    font-size: 16px;
-    padding: 12px 20px;
-    border-radius: 12px;
-    border: 2px solid #ccc;
+    font-size: 14px;
+    padding: 10px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+    margin: 8px;
+  }
+  .secondary-btn:hover { background: #f9fafb; }
+  .nav-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    align-items: center;
+  }
+  .nav-left { text-align: left; }
+  .nav-center { text-align: center; }
+  .nav-right { text-align: right; }
+  .mic-btn {
+    font-size: 34px;
+    width: 88px;
+    height: 88px;
+    border-radius: 8px;
+    border: none;
+    background: #dc2626;
+    color: white;
+    cursor: pointer;
+  }
+  .mic-btn.listening { background: #b91c1c; animation: pulse 1s infinite; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(220,38,38,0.4); }
+    100% { box-shadow: 0 0 0 16px rgba(220,38,38,0); }
+  }
+  .status { margin-top: 16px; font-size: 14px; color: var(--text-muted); min-height: 22px; }
+  .score { font-size: 44px; font-weight: 700; margin: 16px 0; }
+  .score.pass { color: #16a34a; }
+  .score.fail { color: #dc2626; }
+  .feedback { font-size: 18px; margin-bottom: 16px; }
+  .progress { color: var(--text-muted); font-size: 13px; margin-bottom: 8px; }
+
+  .card.wide { max-width: 760px; text-align: left; }
+  .form-row { margin: 10px 0; text-align: left; }
+  .form-row label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
+  input[type="text"], input[type="password"], input[type="number"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: inherit;
+  }
+  .top-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .data-table th, .data-table td {
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+  .data-table th { color: var(--text-muted); font-weight: 600; font-size: 13px; }
+  .pill-btn {
+    font-size: 13px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
     background: white;
     cursor: pointer;
-    margin: 8px;
   }
-  .mic-btn {
-    font-size: 40px;
-    width: 100px;
-    height: 100px;
-    border-radius: 50%;
-    border: none;
-    background: #e74c3c;
-    color: white;
-    cursor: pointer;
-  }
-  .mic-btn.listening { background: #c0392b; animation: pulse 1s infinite; }
-  @keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(231,76,60,0.5); }
-    100% { box-shadow: 0 0 0 20px rgba(231,76,60,0); }
-  }
-  .status { margin-top: 16px; font-size: 16px; color: #666; min-height: 24px; }
-  .score { font-size: 48px; font-weight: bold; margin: 16px 0; }
-  .score.pass { color: #27ae60; }
-  .score.fail { color: #e74c3c; }
-  .feedback { font-size: 20px; margin-bottom: 16px; }
-  .progress { color: #999; font-size: 14px; margin-bottom: 8px; }
+  .pill-btn:hover { background: #f9fafb; }
+  .pill-btn.danger { color: #dc2626; border-color: #fecaca; }
+  .pill-btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
+  .hint { color: var(--text-muted); font-size: 13px; margin: 8px 0; }
+  .stepper { display: inline-flex; align-items: center; gap: 8px; }
+  .stepper input { width: 60px; text-align: center; }
 </style>
 </head>
 <body>
-  <h1>자모 → 음절 → 단어 발음 지도</h1>
-  <div class="card" id="app"></div>
+  <div class="topbar"><div class="logo">한글<span>또박</span> 발음 지도</div></div>
+  <main>
+    <div class="card" id="app"></div>
+  </main>
 
 <script>
 const stages = [
   { name: '1. 모음', items: [
-      { text: '아' }, { text: '어' }, { text: '오' },
-    ] },
+      '아', '어', '오', '우', '으', '이', '야', '여', '요', '유',
+    ].map((text) => ({ text })) },
   { name: '2. 자음', items: [
-      { text: '가' }, { text: '나' }, { text: '다' },
-    ] },
+      '가', '나', '다', '라', '마', '바', '사', '자', '차', '카', '타', '파', '하', '까', '따', '빠', '싸', '짜',
+    ].map((text) => ({ text })) },
   { name: '3. 받침 없는 단어', items: [
-      { text: '나비' }, { text: '토마토' }, { text: '가지' },
-    ] },
+      '나비', '토마토', '가지', '오리', '모자', '바다', '아기', '사자', '버스', '두부', '고구마', '여우', '다리미',
+      '노무', '가더', '수바',
+    ].map((text) => ({ text })) },
   { name: '4. 이중모음', items: [
-      { text: '개' }, { text: '왜' }, { text: '위' },
-    ] },
+      '애', '에', '얘', '예', '와', '왜', '외', '워', '웨', '위', '의',
+    ].map((text) => ({ text })) },
   { name: '5. 이중모음 단어', items: [
-      { text: '얘기' }, { text: '과자' }, { text: '스웨터' },
-    ] },
+      '사과', '과자', '채소', '예의', '돼지', '왜가리', '스웨터', '의자', '회사', '휴게소',
+    ].map((text) => ({ text })) },
   { name: '6. 대표받침', items: [
-      { text: '밥' }, { text: '눈' }, { text: '강' },
-    ] },
+      '막', '국', '눈', '손', '곧', '물', '달', '김', '몸', '밥', '집', '강', '공',
+    ].map((text) => ({ text })) },
 ];
 
-let state = { screen: 'stageList', stageIdx: 0, itemIdx: 0, sessions: [], currentSessionIdx: null, viewingSessionIdx: null };
+// 배열 순서를 무작위로 섞는다 (Fisher-Yates)
+function shuffle(array) {
+  const result = array.slice();
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+let state = {
+  screen: 'login', stageIdx: 0, itemIdx: 0, sessionItems: [], sessions: [],
+  currentSessionIdx: null, viewingSessionIdx: null,
+  teacher: null, teacherId: null, classes: [], currentClassId: null, currentStudentId: null,
+};
 const app = document.getElementById('app');
+const WIDE_SCREENS = ['classList', 'studentList'];
 
 function render() {
-  if (state.screen === 'stageList') renderStageList();
-  else if (state.screen === 'listen') renderListen();
-  else if (state.screen === 'speak') renderSpeak();
+  app.className = WIDE_SCREENS.includes(state.screen) ? 'card wide' : 'card';
+  if (state.screen === 'login') renderLogin();
+  else if (state.screen === 'classList') renderClassList();
+  else if (state.screen === 'studentList') renderStudentList();
+  else if (state.screen === 'stageList') renderStageList();
+  else if (state.screen === 'practice') renderPractice();
   else if (state.screen === 'result') renderResult(state.lastResult);
   else if (state.screen === 'history') renderHistory();
   else if (state.screen === 'sessionDetail') renderSessionDetail();
 }
 
-function renderStageList() {
+// ===== 선생님 로그인 / 반 / 학생 관리 (Supabase) =====
+// URL과 publishable key는 브라우저에 노출돼도 안전하도록 설계된 키라서 그대로 씀.
+// 실제 데이터 접근 권한은 Supabase의 Row Level Security(RLS)가 통제함 (본인 데이터만).
+const SUPABASE_URL = 'https://idvfmahxmdgyjncgtjxa.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_WdkCUWWM5QO8fz1JQsZq3Q_gy63sqOT';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
+// 선생님 이름(한글)을 Supabase Auth가 요구하는 이메일 형식으로 바꾸기 위한 결정적 해시.
+// 실제 이메일 주소가 아니라 로그인용 내부 식별자일 뿐이며, 같은 이름은 항상 같은 값이 된다.
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  return hash.toString(36);
+}
+function emailFor(name) {
+  return 't' + simpleHash(name.trim()) + '@hangeul.local';
+}
+
+function renderLogin() {
   app.innerHTML = `
+    <p style="font-weight:600; margin-bottom:16px;">선생님 로그인</p>
+    <div class="form-row"><label>이름</label><input type="text" id="loginName" placeholder="예: 김민지" /></div>
+    <div class="form-row"><label>비밀번호 (6자 이상, 처음이면 새로 만들어져요)</label><input type="password" id="loginPin" placeholder="비밀번호" /></div>
+    <div id="loginError" style="color:#dc2626; font-size:13px; min-height:18px; margin-bottom:8px;"></div>
+    <button class="big-btn" id="loginBtn" style="width:100%;">로그인 / 시작하기</button>
+    <p class="hint">이름+비밀번호는 실제 이메일 없이도 로그인되도록 내부적으로 변환해서 저장돼요. 데이터는 Supabase 서버에 저장되어 다른 컴퓨터에서도 같은 이름+비밀번호로 로그인하면 이어서 볼 수 있어요.</p>
+  `;
+  document.getElementById('loginBtn').onclick = handleLogin;
+  document.getElementById('loginPin').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleLogin();
+  });
+}
+
+async function handleLogin() {
+  const name = document.getElementById('loginName').value.trim();
+  const pin = document.getElementById('loginPin').value;
+  const errorEl = document.getElementById('loginError');
+  const loginBtn = document.getElementById('loginBtn');
+  if (!name || !pin) { errorEl.textContent = '이름과 비밀번호를 입력해주세요'; return; }
+  if (pin.length < 6) { errorEl.textContent = '비밀번호는 6자 이상이어야 해요'; return; }
+
+  loginBtn.disabled = true;
+  errorEl.textContent = '로그인 중...';
+  const email = emailFor(name);
+
+  let { data, error } = await sb.auth.signInWithPassword({ email, password: pin });
+  if (error) {
+    const signUpRes = await sb.auth.signUp({ email, password: pin, options: { data: { name } } });
+    if (signUpRes.error) {
+      loginBtn.disabled = false;
+      errorEl.textContent = '로그인에 실패했어요: ' + signUpRes.error.message;
+      return;
+    }
+    if (!signUpRes.data.session) {
+      loginBtn.disabled = false;
+      errorEl.textContent = '가입은 됐지만 자동 로그인이 안 돼요. Supabase 대시보드 Authentication 설정에서 "Confirm email"을 꺼주세요.';
+      return;
+    }
+    data = signUpRes.data;
+  }
+
+  state.teacher = name;
+  state.teacherId = data.user.id;
+  loginBtn.disabled = false;
+  errorEl.textContent = '';
+  await loadClasses();
+  state.screen = 'classList';
+  render();
+}
+
+async function loadClasses() {
+  const { data, error } = await sb
+    .from('classes')
+    .select('*, students(*, sessions(*))')
+    .eq('teacher_id', state.teacherId)
+    .order('created_at', { ascending: true });
+  if (error) { console.error('반 목록을 불러오지 못했어요:', error); state.classes = []; return; }
+  state.classes = data || [];
+  state.classes.forEach((c) => {
+    c.students.sort((a, b) => a.number - b.number);
+    c.students.forEach((s) => {
+      s.sessions = (s.sessions || []).map((sess) => ({
+        id: sess.id, stageName: sess.stage_name, items: sess.items || [], total: sess.total,
+      }));
+    });
+  });
+}
+
+function renderClassList() {
+  const classes = state.classes;
+  app.innerHTML = `
+    <div class="top-actions">
+      <span>${state.teacher} 선생님</span>
+      <button class="pill-btn" id="logoutBtn">로그아웃</button>
+    </div>
+    <p style="font-weight:600; margin-bottom:8px;">반 목록</p>
+    ${classes.length
+      ? classes.map((c, i) => `<button class="stage-btn" data-idx="${i}">${c.name} · 학생 ${c.students.length}명</button>`).join('')
+      : '<p class="hint">아직 만든 반이 없어요</p>'}
+    <div class="form-row" style="display:flex; gap:8px; align-items:flex-end;">
+      <div style="flex:1;">
+        <label>새 반 이름</label>
+        <input type="text" id="newClassName" placeholder="예: 2026학년도 1학년 2반" />
+      </div>
+      <button class="secondary-btn" id="addClassBtn">+ 반 추가</button>
+    </div>
+    <div id="classError" style="color:#dc2626; font-size:13px;"></div>
+  `;
+  document.getElementById('logoutBtn').onclick = async () => {
+    await sb.auth.signOut();
+    state.teacher = null; state.teacherId = null; state.classes = [];
+    state.screen = 'login'; render();
+  };
+  const addClass = async () => {
+    const nameInput = document.getElementById('newClassName');
+    const name = nameInput.value.trim();
+    if (!name) { nameInput.focus(); return; }
+    const { data, error } = await sb
+      .from('classes')
+      .insert({ teacher_id: state.teacherId, name })
+      .select()
+      .single();
+    if (error) { document.getElementById('classError').textContent = '반 추가 실패: ' + error.message; return; }
+    state.classes.push({ ...data, students: [] });
+    render();
+  };
+  document.getElementById('addClassBtn').onclick = addClass;
+  document.getElementById('newClassName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addClass();
+  });
+  app.querySelectorAll('[data-idx]').forEach((btn) => {
+    btn.onclick = () => {
+      state.currentClassId = classes[Number(btn.dataset.idx)].id;
+      state.screen = 'studentList';
+      render();
+    };
+  });
+}
+
+function currentClass() {
+  return state.classes.find((c) => c.id === state.currentClassId);
+}
+
+function studentAverage(student) {
+  const scores = (student.sessions || []).flatMap((sess) => sess.items.filter(Boolean).map((it) => it.accuracy));
+  if (!scores.length) return null;
+  return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+}
+
+function renderStudentList() {
+  const cls = currentClass();
+  const rows = cls.students.map((s, i) => {
+    const avg = studentAverage(s);
+    return `
+      <tr>
+        <td>${s.number}</td>
+        <td><input type="text" value="${s.name || ''}" data-name-idx="${i}" placeholder="이름" style="border:none; background:transparent; width:100%; padding:4px;" /></td>
+        <td>${avg === null ? '-' : avg + '점'}</td>
+        <td><button class="pill-btn primary" data-start="${s.id}">검사 시작</button></td>
+        <td><button class="pill-btn" data-view="${s.id}">결과 보기</button></td>
+        <td><button class="pill-btn danger" data-del="${s.id}">삭제</button></td>
+      </tr>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="top-actions">
+      <button class="pill-btn" id="backBtn">← 반 목록으로</button>
+      <span style="font-weight:600;">${cls.name} · 학생 ${cls.students.length}명</span>
+    </div>
+    <div class="top-actions">
+      <div class="stepper">
+        <span class="hint">학생 수 추가</span>
+        <input type="number" id="addCount" value="1" min="1" />
+        <button class="pill-btn" id="addStudentsBtn">추가</button>
+      </div>
+      <div>
+        <button class="pill-btn" id="downloadTemplateBtn">엑셀 양식 다운로드</button>
+        <label class="pill-btn" style="display:inline-block; margin-left:6px;">엑셀 업로드
+          <input type="file" id="excelInput" accept=".xlsx,.xls" style="display:none;" />
+        </label>
+      </div>
+    </div>
+    <div id="excelMsg" style="color:#dc2626; font-size:13px; min-height:18px; margin-bottom:8px;"></div>
+    <table class="data-table">
+      <thead><tr><th>번호</th><th>이름</th><th>평균 점수</th><th></th><th></th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6" class="hint">학생이 없어요. 학생 수를 추가하거나 엑셀을 업로드하세요.</td></tr>'}</tbody>
+    </table>
+  `;
+
+  document.getElementById('backBtn').onclick = () => { state.screen = 'classList'; render(); };
+  document.getElementById('addStudentsBtn').onclick = async () => {
+    const n = Number(document.getElementById('addCount').value) || 1;
+    const startNum = cls.students.length ? Math.max(...cls.students.map((s) => s.number)) + 1 : 1;
+    const newRows = [];
+    for (let i = 0; i < n; i++) {
+      newRows.push({ class_id: cls.id, teacher_id: state.teacherId, number: startNum + i, name: '' });
+    }
+    const { data, error } = await sb.from('students').insert(newRows).select();
+    if (error) { document.getElementById('excelMsg').textContent = '학생 추가 실패: ' + error.message; return; }
+    (data || []).forEach((s) => cls.students.push({ ...s, sessions: [] }));
+    render();
+  };
+  document.getElementById('downloadTemplateBtn').onclick = downloadStudentTemplate;
+  document.getElementById('excelInput').onchange = (e) => handleExcelUpload(e, cls);
+  app.querySelectorAll('[data-name-idx]').forEach((input) => {
+    input.onchange = async () => {
+      const student = cls.students[Number(input.dataset.nameIdx)];
+      student.name = input.value;
+      const { error } = await sb.from('students').update({ name: input.value }).eq('id', student.id);
+      if (error) document.getElementById('excelMsg').textContent = '이름 저장 실패: ' + error.message;
+    };
+  });
+  app.querySelectorAll('[data-start]').forEach((btn) => {
+    btn.onclick = () => {
+      state.currentStudentId = btn.dataset.start;
+      const student = cls.students.find((s) => s.id === state.currentStudentId);
+      state.sessions = student.sessions;
+      state.currentSessionIdx = null;
+      state.screen = 'stageList';
+      render();
+    };
+  });
+  app.querySelectorAll('[data-view]').forEach((btn) => {
+    btn.onclick = () => {
+      state.currentStudentId = btn.dataset.view;
+      const student = cls.students.find((s) => s.id === state.currentStudentId);
+      state.sessions = student.sessions;
+      state.screen = 'history';
+      render();
+    };
+  });
+  app.querySelectorAll('[data-del]').forEach((btn) => {
+    btn.onclick = async () => {
+      if (btn.dataset.confirming !== 'yes') {
+        btn.dataset.confirming = 'yes';
+        btn.textContent = '한 번 더 누르면 삭제';
+        return;
+      }
+      const { error } = await sb.from('students').delete().eq('id', btn.dataset.del);
+      if (error) { document.getElementById('excelMsg').textContent = '삭제 실패: ' + error.message; return; }
+      cls.students = cls.students.filter((s) => s.id !== btn.dataset.del);
+      render();
+    };
+  });
+}
+
+function downloadStudentTemplate() {
+  const ws = XLSX.utils.aoa_to_sheet([['번호', '이름'], [1, '홍길동'], [2, '김민지']]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '학생목록');
+  XLSX.writeFile(wb, '학생목록_양식.xlsx');
+}
+
+function handleExcelUpload(e, cls) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const msgEl = document.getElementById('excelMsg');
+  const reader = new FileReader();
+  reader.onload = async (evt) => {
+    try {
+      if (typeof XLSX === 'undefined') throw new Error('엑셀 처리 라이브러리를 불러오지 못했어요 (인터넷 연결 확인)');
+      const wb = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+      const dataRows = rows.slice(1).filter((r) => r && r[1]);
+      const newRows = dataRows.map((r, i) => ({
+        class_id: cls.id,
+        teacher_id: state.teacherId,
+        number: r[0] || cls.students.length + i + 1,
+        name: String(r[1]).trim(),
+      }));
+      if (!newRows.length) throw new Error('읽을 수 있는 학생 행이 없어요');
+      const { data, error } = await sb.from('students').insert(newRows).select();
+      if (error) throw new Error(error.message);
+      (data || []).forEach((s) => cls.students.push({ ...s, sessions: [] }));
+      render();
+    } catch (err) {
+      if (msgEl) msgEl.textContent = '엑셀 파일을 읽는 데 실패했어요. 다운로드한 양식과 같은 형식인지 확인해주세요 (1열: 번호, 2열: 이름). (' + err.message + ')';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderStageList() {
+  const cls = currentClass();
+  const student = cls && cls.students.find((s) => s.id === state.currentStudentId);
+  app.innerHTML = `
+    ${student ? `<div class="top-actions"><button class="pill-btn" id="toStudentsBtn">← 학생 목록으로</button><span style="font-weight:600;">${student.name || '(이름 없음)'} 학생</span></div>` : ''}
     <p>연습할 단계를 골라주세요</p>
     ${stages.map((s, i) => `<button class="stage-btn" data-idx="${i}">${s.name}</button>`).join('')}
     <button class="secondary-btn" id="historyBtn">📋 결과 확인</button>
+    <div id="stageError" style="color:#dc2626; font-size:13px;"></div>
   `;
+  if (student) {
+    document.getElementById('toStudentsBtn').onclick = () => { state.screen = 'studentList'; render(); };
+  }
   app.querySelectorAll('.stage-btn').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       state.stageIdx = Number(btn.dataset.idx);
       state.itemIdx = 0;
-      state.sessions.push({ stageName: stages[state.stageIdx].name, items: [] });
+      const pool = stages[state.stageIdx].items;
+      state.sessionItems = shuffle(pool).slice(0, Math.min(5, pool.length));
+      const stageName = stages[state.stageIdx].name;
+      const total = state.sessionItems.length;
+      const { data, error } = await sb
+        .from('sessions')
+        .insert({ student_id: state.currentStudentId, teacher_id: state.teacherId, stage_name: stageName, items: [], total })
+        .select()
+        .single();
+      if (error) { document.getElementById('stageError').textContent = '검사 시작 실패: ' + error.message; return; }
+      state.sessions.push({ id: data.id, stageName: data.stage_name, items: [], total: data.total });
       state.currentSessionIdx = state.sessions.length - 1;
-      state.screen = 'listen';
+      state.screen = 'practice';
       render();
     };
   });
@@ -165,7 +561,7 @@ function renderHistory() {
     const rows = sessionsWithData.slice().reverse().map(({ session, idx }) => {
       const avg = sessionAverage(session);
       const done = session.items.filter(Boolean).length;
-      const total = stages.find((s) => s.name === session.stageName)?.items.length || done;
+      const total = session.total || done;
       return `
         <button class="stage-btn" data-session-idx="${idx}" style="text-align:left;">
           ${session.stageName} — 평균 ${avg}점 (${done}/${total}문항)
@@ -212,29 +608,68 @@ function renderSessionDetail() {
 }
 
 function currentItem() {
-  return stages[state.stageIdx].items[state.itemIdx];
+  return state.sessionItems[state.itemIdx];
 }
 
-function renderListen() {
+function renderPractice() {
   const stage = stages[state.stageIdx];
   const item = currentItem();
   const hasPrev = state.itemIdx > 0;
   app.innerHTML = `
-    <div class="progress">${stage.name} · ${state.itemIdx + 1}/${stage.items.length}</div>
+    <div class="progress">${stage.name} · ${state.itemIdx + 1}/${state.sessionItems.length}</div>
     <div class="target-text">${item.text}</div>
     <button class="big-btn" id="playBtn">🔊 듣기</button>
     <br/>
-    <button class="secondary-btn" id="toListBtn">단계 목록으로</button>
-    ${hasPrev ? '<button class="secondary-btn" id="prevBtn">이전 문제</button>' : ''}
-    <button class="big-btn" id="toSpeakBtn">말하기 연습 →</button>
+    <button class="mic-btn" id="micBtn">🎤</button>
+    <div class="status" id="status">듣고 따라 말해보세요. 버튼을 눌러 녹음 시작/종료</div>
+    <br/>
+    <div class="nav-row">
+      <div class="nav-left">${hasPrev ? '<button class="secondary-btn" id="prevBtn">이전 문항</button>' : ''}</div>
+      <div class="nav-center"><button class="secondary-btn" id="toListBtn">단계 목록으로</button></div>
+      <div class="nav-right"><button class="secondary-btn" id="dontKnowBtn">모르겠어요</button></div>
+    </div>
   `;
   document.getElementById('playBtn').onclick = () => speak(item.text);
   document.getElementById('toListBtn').onclick = () => { state.screen = 'stageList'; render(); };
-  document.getElementById('toSpeakBtn').onclick = () => { state.screen = 'speak'; render(); };
+  document.getElementById('dontKnowBtn').onclick = () => markDontKnow(item.text);
   if (hasPrev) {
     document.getElementById('prevBtn').onclick = () => { state.itemIdx -= 1; render(); };
   }
+  document.getElementById('micBtn').onclick = () => {
+    if (state.recording) {
+      stopRecording();
+    } else {
+      startRecording(item.text);
+    }
+  };
   speak(item.text);
+}
+
+function saveSessionItems(session) {
+  sb.from('sessions').update({ items: session.items }).eq('id', session.id)
+    .then(({ error }) => { if (error) console.error('결과 저장 실패:', error); });
+}
+
+function markDontKnow(itemText) {
+  state.lastResult = {
+    accuracy: 0,
+    recognizedText: '',
+    pass: false,
+    feedback: '모르겠어요라고 답했어요',
+    reason: '',
+  };
+  if (state.currentSessionIdx !== null) {
+    const session = state.sessions[state.currentSessionIdx];
+    session.items[state.itemIdx] = {
+      text: itemText,
+      accuracy: 0,
+      pass: false,
+      feedback: '모르겠다고 답함',
+    };
+    saveSessionItems(session);
+  }
+  state.screen = 'result';
+  render();
 }
 
 async function speak(text) {
@@ -254,27 +689,6 @@ async function speak(text) {
   } catch (e) {
     console.error('TTS 오류:', e.message);
   }
-}
-
-function renderSpeak() {
-  const stage = stages[state.stageIdx];
-  const item = currentItem();
-  app.innerHTML = `
-    <div class="progress">${stage.name} · ${state.itemIdx + 1}/${stage.items.length}</div>
-    <div class="target-text">${item.text}</div>
-    <button class="mic-btn" id="micBtn">🎤</button>
-    <div class="status" id="status">버튼을 눌러 말하기 시작, 다 말하면 한 번 더 눌러 끝내세요</div>
-    <br/>
-    <button class="secondary-btn" id="backBtn">← 다시 듣기</button>
-  `;
-  document.getElementById('backBtn').onclick = () => { state.screen = 'listen'; render(); };
-  document.getElementById('micBtn').onclick = () => {
-    if (state.recording) {
-      stopRecording();
-    } else {
-      startRecording(item.text);
-    }
-  };
 }
 
 async function startRecording(targetText) {
@@ -522,12 +936,14 @@ async function assessRecording(blob, targetText) {
         reason,
       };
       if (state.currentSessionIdx !== null) {
-        state.sessions[state.currentSessionIdx].items[state.itemIdx] = {
+        const session = state.sessions[state.currentSessionIdx];
+        session.items[state.itemIdx] = {
           text: currentItem().text,
           accuracy,
           pass: state.lastResult.pass,
           feedback: reason || feedback,
         };
+        saveSessionItems(session);
       }
     }
   } catch (e) {
@@ -540,7 +956,7 @@ async function assessRecording(blob, targetText) {
 function renderResult(result) {
   const stage = stages[state.stageIdx];
   const item = currentItem();
-  const isLast = state.itemIdx === stage.items.length - 1;
+  const isLast = state.itemIdx === state.sessionItems.length - 1;
 
   if (result.error) {
     app.innerHTML = `
@@ -548,7 +964,7 @@ function renderResult(result) {
       <div class="feedback">${result.error}</div>
       <button class="big-btn" id="retryBtn">다시 시도</button>
     `;
-    document.getElementById('retryBtn').onclick = () => { state.screen = 'speak'; render(); };
+    document.getElementById('retryBtn').onclick = () => { state.screen = 'practice'; render(); };
     return;
   }
 
@@ -562,13 +978,13 @@ function renderResult(result) {
     <button class="secondary-btn" id="retryBtn">다시 시도</button>
     <button class="big-btn" id="nextBtn">${isLast ? '단계 목록으로' : '다음 문제'}</button>
   `;
-  document.getElementById('retryBtn').onclick = () => { state.screen = 'speak'; render(); };
+  document.getElementById('retryBtn').onclick = () => { state.screen = 'practice'; render(); };
   document.getElementById('nextBtn').onclick = () => {
     if (isLast) {
       state.screen = 'stageList';
     } else {
       state.itemIdx += 1;
-      state.screen = 'listen';
+      state.screen = 'practice';
     }
     render();
   };
