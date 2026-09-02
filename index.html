@@ -4,11 +4,18 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>발음 지도 앱</title>
+<!-- Azure Speech SDK: 목표 발음을 읽어주는 음성 합성(TTS)에 사용하는 SpeechSDK 전역 객체를 제공한다 -->
 <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
+<!-- SheetJS(xlsx): 학생 명단 엑셀 파일을 읽고(업로드) 쓰는(양식 다운로드) 데 쓰는 라이브러리 -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- Supabase 클라이언트: 선생님 로그인(Auth)과 반/학생/검사기록 데이터베이스 접근에 사용 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Chart.js: 학급 통계 화면의 막대그래프·도넛차트·원형차트를 그리는 데 사용 (버전 고정) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
+  /* 모든 요소의 padding/border를 width/height 계산에 포함시켜서(border-box) 레이아웃 계산을 단순하게 만든다 */
   * { box-sizing: border-box; }
+  /* 앱 전체에서 반복해서 쓰는 색상들을 변수로 모아둠 - 여기 값만 바꾸면 앱 전체 색이 함께 바뀐다 */
   :root {
     --primary: #2563eb;
     --primary-dark: #1d4ed8;
@@ -91,6 +98,9 @@
     margin: 8px;
   }
   .secondary-btn:hover { background: #f9fafb; }
+  /* 오답 화면에서 선생님이 "사실은 맞았다"고 눌러 수동으로 정답 처리하는 버튼의 초록색 강조 스타일 */
+  .secondary-btn.success { color: #16a34a; border-color: #86efac; }
+  .secondary-btn.success:hover { background: #f0fdf4; }
   .nav-row {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
@@ -109,6 +119,7 @@
     color: white;
     cursor: pointer;
   }
+  /* 녹음 중일 때 마이크 버튼이 빨간 빛으로 퍼지는 애니메이션을 계속 반복(infinite)한다 */
   .mic-btn.listening { background: #b91c1c; animation: pulse 1s infinite; }
   @keyframes pulse {
     0% { box-shadow: 0 0 0 0 rgba(220,38,38,0.4); }
@@ -121,6 +132,7 @@
   .feedback { font-size: 18px; margin-bottom: 16px; }
   .progress { color: var(--text-muted); font-size: 13px; margin-bottom: 8px; }
 
+  /* 아래부터는 반/학생 관리 화면(표, 입력폼)에 쓰는 스타일. 표가 있어서 카드 폭을 더 넓힘(wide) */
   .card.wide { max-width: 760px; text-align: left; }
   .form-row { margin: 10px 0; text-align: left; }
   .form-row label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
@@ -161,6 +173,67 @@
   .hint { color: var(--text-muted); font-size: 13px; margin: 8px 0; }
   .stepper { display: inline-flex; align-items: center; gap: 8px; }
   .stepper input { width: 60px; text-align: center; }
+
+  /* ===== 결과 확인 화면(renderHistory)의 단계별 카드 스타일 (2026-09-02 추가) ===== */
+  .result-row {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin: 8px 0;
+    cursor: pointer;
+    text-align: left;
+  }
+  .result-row:hover { border-color: var(--primary); background: #eff6ff; }
+  .result-row-main { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+  .result-row-sub { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+  .result-badge { font-size: 12px; padding: 3px 10px; border-radius: 999px; font-weight: 600; }
+  .result-badge.pass { background: #dcfce7; color: #16a34a; }
+  .result-badge.fail { background: #fee2e2; color: #dc2626; }
+  /* 오답 문항의 오류 유형(받침 탈락, 초성 오류 등)을 보여주는 작은 태그 */
+  .error-tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #fef3c7;
+    color: #92400e;
+    margin: 2px 4px 2px 0;
+  }
+
+  /* ===== 인쇄용 검사지 리포트(renderReport) 스타일 (2026-09-02 추가) ===== */
+  .report-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 12px 0; }
+  .report-table th, .report-table td { border: 1px solid var(--border); padding: 8px 10px; text-align: center; }
+  .report-table th { background: #f3f4f6; }
+  .report-table td.left { text-align: left; }
+  .report-comment { border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; background: #f9fafb; margin: 12px 0; line-height: 1.6; }
+
+  /* ===== 학급 통계(renderClassStats) 스타일 (2026-09-02 추가) ===== */
+  .stats-summary-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; background: #f9fafb; margin-bottom: 16px; }
+  .stats-charts-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .stats-chart-box { border: 1px solid var(--border); border-radius: 8px; padding: 16px; flex: 1; min-width: 220px; margin-bottom: 16px; }
+  .stats-chart-box.wide { flex-basis: 100%; }
+
+  /* ===== 전반적인 가독성 개선 (2026-09-02) =====
+     표가 길어질 때(학생 목록, 리포트 등) 줄마다 배경을 살짝 번갈아 칠해서(zebra striping)
+     같은 줄의 값을 눈으로 따라가기 쉽게 만든다. 표 하나를 관통하는 헤더 글자 크기/여백도
+     여기서 통일해서 화면마다 들쭉날쭉하지 않게 한다. */
+  /* 짝수 행 줄무늬(zebra striping)는 넣어봤다가 hover와 색이 겹쳐 보기 불편하다는 피드백을 받고
+     뺐다(2026-09-02) - 대신 마우스를 올렸을 때만 연한 파랑으로 강조한다. */
+  .data-table tbody tr:hover, .report-table tbody tr:hover { background: #eff6ff; }
+  .data-table th, .report-table th { font-size: 13px; letter-spacing: 0.02em; }
+  /* 화면 상단 "N. 제목" 같은 섹션 구분 문구를 어디서나 똑같은 크기/여백으로 보이게 한다 */
+  .section-title { font-weight: 600; font-size: 15px; margin: 16px 0 8px 0; }
+  .section-title:first-child { margin-top: 0; }
+
+  /* 화면에는 보이지만 인쇄할 때는 감출 요소(뒤로가기/인쇄 버튼 등)에 붙이는 클래스 */
+  @media print {
+    .no-print { display: none !important; }
+    .topbar { display: none !important; }
+    body { background: white; }
+    main { padding: 0; }
+    .card { border: none; box-shadow: none; max-width: 100%; padding: 0; }
+  }
 </style>
 </head>
 <body>
@@ -170,6 +243,11 @@
   </main>
 
 <script>
+// ===== 문항 데이터 =====
+// 학습 단계(모음 → 자음 → 받침없는 단어 → 이중모음 → 이중모음 단어 → 대표받침) 순서로 정의한다
+// (순서와 이유는 llm-wiki/09-앱-설계-개요.md 참고). 각 단계는 이름(name)과 문항 목록(items)을 갖고,
+// items의 각 항목은 { text: '화면에 보여줄 글자' } 형태다. 실제 검사에서는 이 목록 전체를 다 쓰지 않고
+// shuffle()로 섞은 뒤 일부만 뽑아서 쓴다 (renderStageList 참고).
 const stages = [
   { name: '1. 모음', items: [
       '아', '어', '오', '우', '으', '이', '야', '여', '요', '유',
@@ -192,7 +270,10 @@ const stages = [
     ].map((text) => ({ text })) },
 ];
 
-// 배열 순서를 무작위로 섞는다 (Fisher-Yates)
+// 배열 순서를 무작위로 섞는다 (Fisher-Yates 셔플 알고리즘).
+// 원본 배열은 그대로 두고 복사본(array.slice())을 섞어서 반환한다.
+// 뒤에서부터 i번째 자리와, 0~i 범위에서 무작위로 고른 j번째 자리를 맞바꾸는 과정을 반복하면
+// 모든 순서가 똑같은 확률로 나오는 고른 셔플이 된다.
 function shuffle(array) {
   const result = array.slice();
   for (let i = result.length - 1; i > 0; i--) {
@@ -202,14 +283,43 @@ function shuffle(array) {
   return result;
 }
 
+// 선생님 이름·반 이름·학생 이름처럼 사용자가 직접 입력한 자유 텍스트를 화면(innerHTML)에
+// 그대로 끼워 넣기 전에 특수문자를 이스케이프한다. 이름에 우연히(또는 엑셀 붙여넣기 실수로)
+// <, >, &, ", ' 같은 문자가 들어있어도 엉뚱한 HTML 태그로 해석되거나 화면이 깨지지 않게 한다.
+// (참고: Azure 인식 결과(recognizedText)는 normalizeHangul이 한글 완성형 문자만 남기므로
+// 이 함수를 따로 쓸 필요가 없다 - 애초에 특수문자가 섞여 나올 수 없다.)
+function escapeHtml(text) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(text || '').replace(/[&<>"']/g, (ch) => map[ch]);
+}
+
+// ===== 앱 전체 상태(state) =====
+// 이 앱은 페이지 이동 없이 하나의 화면(#app) 안에서 내용만 바꿔 그리는 SPA(싱글 페이지 앱) 구조다.
+// state 객체 하나에 "지금 어떤 화면을 보여줄지"와 "지금까지 진행한 내용"을 전부 모아 관리한다.
+//   - screen: 지금 그릴 화면 이름. render()가 이 값을 보고 어떤 renderXxx 함수를 부를지 정한다.
+//     ('login' | 'classList' | 'studentList' | 'stageList' | 'practice' | 'result' | 'history' | 'sessionDetail')
+//   - stageIdx / itemIdx: 지금 몇 번째 학습 단계(stages 배열 인덱스)의, 그 안에서 몇 번째 문항을 푸는 중인지
+//   - sessionItems: 이번 검사에서 실제로 풀 문항들 (그 단계 전체 문항 중 shuffle로 뽑은 일부, renderStageList 참고)
+//   - sessions: 지금 고른 학생의 지금까지 검사 기록 목록. 배열의 각 항목이 "시험 1회"에 해당한다.
+//   - currentSessionIdx: sessions 배열에서 지금 한창 진행 중인 세션의 위치 (문제를 풀고 있지 않을 땐 null)
+//   - viewingSessionIdx: 결과 상세 화면(renderSessionDetail)에서 지금 들여다보고 있는 세션의 위치
+//   - teacher / teacherId: 로그인한 선생님 이름과 Supabase Auth가 발급한 그 계정의 고유 id
+//   - classes: 로그인한 선생님이 만든 반 목록. 각 반 객체 안에 그 반 학생들(students) 배열이 들어있다.
+//   - currentClassId / currentStudentId: 지금 화면에서 선택된 반 / 학생의 id
 let state = {
   screen: 'login', stageIdx: 0, itemIdx: 0, sessionItems: [], sessions: [],
   currentSessionIdx: null, viewingSessionIdx: null,
   teacher: null, teacherId: null, classes: [], currentClassId: null, currentStudentId: null,
 };
+// 화면 내용을 갈아끼울 대상이 되는 카드 div (HTML의 <div class="card" id="app"></div>)
 const app = document.getElementById('app');
-const WIDE_SCREENS = ['classList', 'studentList'];
+// 표(table)가 들어가는 화면은 좁은 카드보다 넓은 레이아웃(.card.wide)이 필요해서 따로 표시해둔다
+// sessionDetail도 넓게 바꾼 이유: 문항/점수/인식된 소리/오류 태그 4열짜리 표가 좁은 카드(480px)
+// 안에서는 글자가 한 자씩 줄바꿈될 정도로 답답해서, 2026-09-02에 wide로 옮김.
+const WIDE_SCREENS = ['classList', 'studentList', 'report', 'sessionDetail', 'classStats'];
 
+// 화면을 다시 그리는 함수. state.screen 값에 맞는 renderXxx 함수 하나를 호출한다.
+// 상태(state)를 바꾼 뒤에는 항상 이 함수를 호출해야 화면에 반영된다 (자동으로 다시 그려주지 않음).
 function render() {
   app.className = WIDE_SCREENS.includes(state.screen) ? 'card wide' : 'card';
   if (state.screen === 'login') renderLogin();
@@ -219,7 +329,10 @@ function render() {
   else if (state.screen === 'practice') renderPractice();
   else if (state.screen === 'result') renderResult(state.lastResult);
   else if (state.screen === 'history') renderHistory();
+  else if (state.screen === 'stageAttempts') renderStageAttempts();
   else if (state.screen === 'sessionDetail') renderSessionDetail();
+  else if (state.screen === 'report') renderReport();
+  else if (state.screen === 'classStats') renderClassStats();
 }
 
 // ===== 선생님 로그인 / 반 / 학생 관리 (Supabase) =====
@@ -240,6 +353,10 @@ function emailFor(name) {
   return 't' + simpleHash(name.trim()) + '@hangeul.local';
 }
 
+// 로그인 화면: 이름 + 비밀번호 입력폼과, 그 아래 "구글로 로그인" 버튼을 함께 그린다.
+// 두 방식은 서로 다른 Supabase 계정(auth.uid())으로 취급되므로 완전히 독립적이다 -
+// 이름+비밀번호로 만든 반/학생 데이터는 구글로 로그인해도 보이지 않는다 (아래 handleGoogleLogin 주석 참고).
+// "로그인 / 시작하기" 버튼을 누르거나 비밀번호 칸에서 Enter를 치면 handleLogin()이 실행된다.
 function renderLogin() {
   app.innerHTML = `
     <p style="font-weight:600; margin-bottom:16px;">선생님 로그인</p>
@@ -248,13 +365,43 @@ function renderLogin() {
     <div id="loginError" style="color:#dc2626; font-size:13px; min-height:18px; margin-bottom:8px;"></div>
     <button class="big-btn" id="loginBtn" style="width:100%;">로그인 / 시작하기</button>
     <p class="hint">이름+비밀번호는 실제 이메일 없이도 로그인되도록 내부적으로 변환해서 저장돼요. 데이터는 Supabase 서버에 저장되어 다른 컴퓨터에서도 같은 이름+비밀번호로 로그인하면 이어서 볼 수 있어요.</p>
+    <div style="text-align:center; color:var(--text-muted); font-size:13px; margin:12px 0;">또는</div>
+    <button class="secondary-btn" id="googleLoginBtn" style="width:100%;">🔵 구글 계정으로 로그인</button>
   `;
   document.getElementById('loginBtn').onclick = handleLogin;
   document.getElementById('loginPin').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleLogin();
   });
+  document.getElementById('googleLoginBtn').onclick = handleGoogleLogin;
 }
 
+// 로그인 성공 후 공통으로 하는 일: 선생님 이름/id를 state에 기억해두고,
+// 그 선생님의 반 목록을 불러온 뒤 반 목록 화면으로 넘어간다.
+// (이름+비밀번호 로그인, 구글 로그인, 페이지를 새로고침했을 때의 자동 재로그인 이렇게 세 곳에서 공통으로 쓴다)
+async function enterAsTeacher(name, teacherId) {
+  state.teacher = name;
+  state.teacherId = teacherId;
+  await loadClasses();
+  state.screen = 'classList';
+  render();
+}
+
+// "구글 계정으로 로그인" 버튼 처리.
+// Supabase Auth가 구글 로그인 화면으로 브라우저를 통째로 이동시키고, 로그인이 끝나면 다시 이
+// 페이지(redirectTo)로 돌아온다 - 돌아온 뒤의 처리는 이 함수가 아니라, 파일 맨 아래 페이지가
+// 처음 열릴 때 실행되는 세션 확인 코드에서 이어서 한다 (구글 로그인은 페이지가 완전히 새로
+// 열리는 방식이라, 지금 실행 중인 이 함수는 리다이렉트가 끝나면 더 이상 이어지지 않는다).
+// 주의: 구글로 로그인하면 이름+비밀번호 계정과는 완전히 다른 새 계정으로 취급된다
+// (이름+비밀번호는 가짜 이메일을 쓰고, 구글은 실제 gmail 주소를 쓰기 때문에 서로 겹치지 않는다).
+// 즉 기존에 이름+비밀번호로 만들어둔 반/학생 데이터는 구글 로그인 계정에서는 보이지 않는다.
+async function handleGoogleLogin() {
+  await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
+}
+
+// 로그인 처리.
+// 회원가입 절차를 따로 만들지 않고, 처음 보는 이름이면 로그인 시도가 실패하는 걸 이용해
+// 그 자리에서 바로 signUp(회원가입)까지 자동으로 진행한다. Supabase Auth는 이메일 형식을 요구하므로
+// 이름을 그대로 쓰지 않고 emailFor()로 변환한 가짜 이메일(t해시값@hangeul.local)을 사용한다.
 async function handleLogin() {
   const name = document.getElementById('loginName').value.trim();
   const pin = document.getElementById('loginPin').value;
@@ -283,15 +430,15 @@ async function handleLogin() {
     data = signUpRes.data;
   }
 
-  state.teacher = name;
-  state.teacherId = data.user.id;
   loginBtn.disabled = false;
   errorEl.textContent = '';
-  await loadClasses();
-  state.screen = 'classList';
-  render();
+  await enterAsTeacher(name, data.user.id);
 }
 
+// 로그인한 선생님의 반 + 각 반의 학생 + 학생별 검사 기록(sessions)을 한 번에 불러온다.
+// Supabase의 관계형 select 문법( '*, students(*, sessions(*))' )을 쓰면 반 → 학생 → 검사기록까지
+// 3단계로 이어진 테이블을 요청 한 번으로 가져올 수 있다. 불러온 뒤 학생을 번호순으로 정렬하고,
+// DB 컬럼 이름(stage_name 등 snake_case)을 앱 안에서 쓰는 이름(stageName 등 camelCase)으로 맞춰준다.
 async function loadClasses() {
   const { data, error } = await sb
     .from('classes')
@@ -305,21 +452,24 @@ async function loadClasses() {
     c.students.forEach((s) => {
       s.sessions = (s.sessions || []).map((sess) => ({
         id: sess.id, stageName: sess.stage_name, items: sess.items || [], total: sess.total,
+        createdAt: sess.created_at,
       }));
     });
   });
 }
 
+// 반 목록 화면: 선생님이 만든 반들을 버튼 목록으로 보여준다.
+// 반을 누르면 학생 목록 화면(studentList)으로, "+ 반 추가"를 누르면 Supabase에 새 반을 insert한다.
 function renderClassList() {
   const classes = state.classes;
   app.innerHTML = `
     <div class="top-actions">
-      <span>${state.teacher} 선생님</span>
+      <span>${escapeHtml(state.teacher)} 선생님</span>
       <button class="pill-btn" id="logoutBtn">로그아웃</button>
     </div>
     <p style="font-weight:600; margin-bottom:8px;">반 목록</p>
     ${classes.length
-      ? classes.map((c, i) => `<button class="stage-btn" data-idx="${i}">${c.name} · 학생 ${c.students.length}명</button>`).join('')
+      ? classes.map((c, i) => `<button class="stage-btn" data-idx="${i}">${escapeHtml(c.name)} · 학생 ${c.students.length}명</button>`).join('')
       : '<p class="hint">아직 만든 반이 없어요</p>'}
     <div class="form-row" style="display:flex; gap:8px; align-items:flex-end;">
       <div style="flex:1;">
@@ -361,16 +511,22 @@ function renderClassList() {
   });
 }
 
+// state.currentClassId에 해당하는 반 객체를 state.classes 배열에서 찾아 반환한다.
+// (화면마다 매번 반을 새로 불러오지 않고, 로그인 때 한 번 받아둔 state.classes 캐시에서 찾아 쓴다)
 function currentClass() {
   return state.classes.find((c) => c.id === state.currentClassId);
 }
 
+// 학생이 지금까지 치른 모든 검사 문항의 점수(accuracy)를 한데 모아 평균을 낸다.
+// 아직 한 문제도 안 풀었으면(기록이 없으면) null을 반환해서 화면에 "-"로 표시하게 한다.
 function studentAverage(student) {
   const scores = (student.sessions || []).flatMap((sess) => sess.items.filter(Boolean).map((it) => it.accuracy));
   if (!scores.length) return null;
   return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
 }
 
+// 학생 목록 화면: 번호/이름/평균 점수가 담긴 표와, 학생 수를 한 번에 늘리는 기능,
+// 엑셀 양식 다운로드/업로드, 그리고 학생별 "검사 시작"/"결과 보기"/"삭제" 버튼을 그린다.
 function renderStudentList() {
   const cls = currentClass();
   const rows = cls.students.map((s, i) => {
@@ -378,10 +534,13 @@ function renderStudentList() {
     return `
       <tr>
         <td>${s.number}</td>
-        <td><input type="text" value="${s.name || ''}" data-name-idx="${i}" placeholder="이름" style="border:none; background:transparent; width:100%; padding:4px;" /></td>
+        <td><input type="text" value="${escapeHtml(s.name)}" data-name-idx="${i}" placeholder="이름" style="border:none; background:transparent; width:100%; padding:4px;" /></td>
+        <td style="text-align:center;"><input type="checkbox" data-multicultural-idx="${i}" ${s.multicultural ? 'checked' : ''} /></td>
+        <td style="text-align:center;"><input type="checkbox" data-basic-support-idx="${i}" ${s.basic_support ? 'checked' : ''} /></td>
         <td>${avg === null ? '-' : avg + '점'}</td>
         <td><button class="pill-btn primary" data-start="${s.id}">검사 시작</button></td>
         <td><button class="pill-btn" data-view="${s.id}">결과 보기</button></td>
+        <td><button class="pill-btn" data-report="${s.id}">리포트</button></td>
         <td><button class="pill-btn danger" data-del="${s.id}">삭제</button></td>
       </tr>`;
   }).join('');
@@ -389,7 +548,8 @@ function renderStudentList() {
   app.innerHTML = `
     <div class="top-actions">
       <button class="pill-btn" id="backBtn">← 반 목록으로</button>
-      <span style="font-weight:600;">${cls.name} · 학생 ${cls.students.length}명</span>
+      <span style="font-weight:600;">${escapeHtml(cls.name)} · 학생 ${cls.students.length}명</span>
+      <button class="pill-btn primary" id="classStatsBtn">📊 학급통계</button>
     </div>
     <div class="top-actions">
       <div class="stepper">
@@ -406,12 +566,15 @@ function renderStudentList() {
     </div>
     <div id="excelMsg" style="color:#dc2626; font-size:13px; min-height:18px; margin-bottom:8px;"></div>
     <table class="data-table">
-      <thead><tr><th>번호</th><th>이름</th><th>평균 점수</th><th></th><th></th><th></th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="6" class="hint">학생이 없어요. 학생 수를 추가하거나 엑셀을 업로드하세요.</td></tr>'}</tbody>
+      <thead><tr><th>번호</th><th>이름</th><th>다문화</th><th>기초학습<br/>지원대상</th><th>평균 점수</th><th></th><th></th><th></th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="9" class="hint">학생이 없어요. 학생 수를 추가하거나 엑셀을 업로드하세요.</td></tr>'}</tbody>
     </table>
   `;
 
   document.getElementById('backBtn').onclick = () => { state.screen = 'classList'; render(); };
+  document.getElementById('classStatsBtn').onclick = () => { state.screen = 'classStats'; render(); };
+  // "학생 수 추가" 버튼: 입력한 인원수(n)만큼 이름이 빈 학생 행을 한꺼번에 추가한다.
+  // 번호는 지금 있는 학생들 중 가장 큰 번호 다음부터 이어서 매긴다.
   document.getElementById('addStudentsBtn').onclick = async () => {
     const n = Number(document.getElementById('addCount').value) || 1;
     const startNum = cls.students.length ? Math.max(...cls.students.map((s) => s.number)) + 1 : 1;
@@ -426,12 +589,30 @@ function renderStudentList() {
   };
   document.getElementById('downloadTemplateBtn').onclick = downloadStudentTemplate;
   document.getElementById('excelInput').onchange = (e) => handleExcelUpload(e, cls);
+  // 이름 입력칸에서 포커스가 빠져나가면(onchange) 바로 Supabase에도 저장한다 (별도 저장 버튼 없음)
   app.querySelectorAll('[data-name-idx]').forEach((input) => {
     input.onchange = async () => {
       const student = cls.students[Number(input.dataset.nameIdx)];
       student.name = input.value;
       const { error } = await sb.from('students').update({ name: input.value }).eq('id', student.id);
       if (error) document.getElementById('excelMsg').textContent = '이름 저장 실패: ' + error.message;
+    };
+  });
+  // 다문화/기초학습지원대상 체크박스: 체크할 때마다 바로 Supabase에 저장한다 (검사지 리포트에 함께 표시됨)
+  app.querySelectorAll('[data-multicultural-idx]').forEach((checkbox) => {
+    checkbox.onchange = async () => {
+      const student = cls.students[Number(checkbox.dataset.multiculturalIdx)];
+      student.multicultural = checkbox.checked;
+      const { error } = await sb.from('students').update({ multicultural: checkbox.checked }).eq('id', student.id);
+      if (error) document.getElementById('excelMsg').textContent = '저장 실패: ' + error.message;
+    };
+  });
+  app.querySelectorAll('[data-basic-support-idx]').forEach((checkbox) => {
+    checkbox.onchange = async () => {
+      const student = cls.students[Number(checkbox.dataset.basicSupportIdx)];
+      student.basic_support = checkbox.checked;
+      const { error } = await sb.from('students').update({ basic_support: checkbox.checked }).eq('id', student.id);
+      if (error) document.getElementById('excelMsg').textContent = '저장 실패: ' + error.message;
     };
   });
   app.querySelectorAll('[data-start]').forEach((btn) => {
@@ -453,6 +634,20 @@ function renderStudentList() {
       render();
     };
   });
+  // "리포트" 버튼: 인쇄 가능한 형태로 정리된 검사 결과 요약(renderReport)으로 이동한다
+  app.querySelectorAll('[data-report]').forEach((btn) => {
+    btn.onclick = () => {
+      state.currentStudentId = btn.dataset.report;
+      const student = cls.students.find((s) => s.id === state.currentStudentId);
+      state.sessions = student.sessions;
+      state.reportStudent = student;
+      state.reportClassName = cls.name;
+      state.screen = 'report';
+      render();
+    };
+  });
+  // 삭제 버튼: 실수로 바로 삭제되지 않도록 2단계로 나눔 - 처음 누르면 "한 번 더 누르면 삭제"로
+  // 문구만 바뀌고, 그 상태에서 한 번 더 누를 때만 실제 삭제 요청을 보낸다.
   app.querySelectorAll('[data-del]').forEach((btn) => {
     btn.onclick = async () => {
       if (btn.dataset.confirming !== 'yes') {
@@ -468,6 +663,7 @@ function renderStudentList() {
   });
 }
 
+// "엑셀 양식 다운로드" 버튼: 번호/이름 두 열로 된 견본 xlsx 파일을 만들어 바로 다운로드시킨다.
 function downloadStudentTemplate() {
   const ws = XLSX.utils.aoa_to_sheet([['번호', '이름'], [1, '홍길동'], [2, '김민지']]);
   const wb = XLSX.utils.book_new();
@@ -475,6 +671,8 @@ function downloadStudentTemplate() {
   XLSX.writeFile(wb, '학생목록_양식.xlsx');
 }
 
+// 엑셀 업로드 처리: 파일을 선택하면 브라우저에서 바로 읽어서(서버로 파일을 보내지 않음)
+// 1열=번호, 2열=이름 형식의 학생 명단을 한꺼번에 추가한다. rows.slice(1)로 첫 줄(머릿글)은 건너뛴다.
 function handleExcelUpload(e, cls) {
   const file = e.target.files[0];
   if (!file) return;
@@ -483,9 +681,11 @@ function handleExcelUpload(e, cls) {
   reader.onload = async (evt) => {
     try {
       if (typeof XLSX === 'undefined') throw new Error('엑셀 처리 라이브러리를 불러오지 못했어요 (인터넷 연결 확인)');
+      // 엑셀 파일(바이너리)을 SheetJS로 파싱해서 첫 번째 시트를 2차원 배열(행의 배열)로 바꾼다
       const wb = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+      // 첫 줄(헤더: "번호", "이름")은 건너뛰고, 이름 칸(r[1])이 비어있는 행도 제외한다
       const dataRows = rows.slice(1).filter((r) => r && r[1]);
       const newRows = dataRows.map((r, i) => ({
         class_id: cls.id,
@@ -505,11 +705,14 @@ function handleExcelUpload(e, cls) {
   reader.readAsArrayBuffer(file);
 }
 
+// 학습 단계 목록 화면: 학생을 고르고 들어온 경우 그 학생 이름을 상단에 보여주고,
+// stages 배열에 정의된 6개 단계를 버튼으로 나열한다. 단계 버튼을 누르면 그 단계 문항 중
+// 무작위로 최대 5개를 뽑아 새 검사 세션을 시작한다 (아래 stage-btn 클릭 핸들러 참고).
 function renderStageList() {
   const cls = currentClass();
   const student = cls && cls.students.find((s) => s.id === state.currentStudentId);
   app.innerHTML = `
-    ${student ? `<div class="top-actions"><button class="pill-btn" id="toStudentsBtn">← 학생 목록으로</button><span style="font-weight:600;">${student.name || '(이름 없음)'} 학생</span></div>` : ''}
+    ${student ? `<div class="top-actions"><button class="pill-btn" id="toStudentsBtn">← 학생 목록으로</button><span style="font-weight:600;">${student.name ? escapeHtml(student.name) : '(이름 없음)'} 학생</span></div>` : ''}
     <p>연습할 단계를 골라주세요</p>
     ${stages.map((s, i) => `<button class="stage-btn" data-idx="${i}">${s.name}</button>`).join('')}
     <button class="secondary-btn" id="historyBtn">📋 결과 확인</button>
@@ -518,6 +721,8 @@ function renderStageList() {
   if (student) {
     document.getElementById('toStudentsBtn').onclick = () => { state.screen = 'studentList'; render(); };
   }
+  // 단계 버튼 클릭: 그 단계의 전체 문항(pool)을 섞은 뒤 앞에서 5개(또는 전체 문항 수가 5개보다
+  // 적으면 그만큼)만 뽑아 이번 검사에서 쓸 문항으로 정하고, Supabase에 새 세션 행을 만든다.
   app.querySelectorAll('.stage-btn').forEach(btn => {
     btn.onclick = async () => {
       state.stageIdx = Number(btn.dataset.idx);
@@ -532,7 +737,7 @@ function renderStageList() {
         .select()
         .single();
       if (error) { document.getElementById('stageError').textContent = '검사 시작 실패: ' + error.message; return; }
-      state.sessions.push({ id: data.id, stageName: data.stage_name, items: [], total: data.total });
+      state.sessions.push({ id: data.id, stageName: data.stage_name, items: [], total: data.total, createdAt: data.created_at });
       state.currentSessionIdx = state.sessions.length - 1;
       state.screen = 'practice';
       render();
@@ -541,76 +746,595 @@ function renderStageList() {
   document.getElementById('historyBtn').onclick = () => { state.screen = 'history'; render(); };
 }
 
+// 한 세션(시험 1회) 안에서 실제로 푼 문항들만 골라 평균 점수를 계산한다.
 function sessionAverage(session) {
   const done = session.items.filter(Boolean);
   if (!done.length) return null;
   return Math.round(done.reduce((sum, it) => sum + it.accuracy, 0) / done.length);
 }
 
+// 결과 확인 화면 (2026-09-02 재설계): 시도한 시간 순서가 아니라, 커리큘럼 단계(1.모음~6.대표받침)
+// 순서로 묶어서 보여준다 - "순서대로가 아니라 항목 순으로 보고 싶다"는 요청 반영.
+// 각 단계는 가장 최근 시도의 평균 점수와 "도달/보완 필요" 배지를 보여주고, 탭하면 그 단계의
+// 시도 기록(1번만 시도했으면 바로 문항별 상세, 여러 번 시도했으면 시도 목록)으로 이동한다.
 function renderHistory() {
-  const sessionsWithData = state.sessions
-    .map((s, i) => ({ session: s, idx: i }))
-    .filter((x) => x.session.items.some(Boolean));
+  // stages 배열 순서(커리큘럼 순서) 그대로 훑으면서, 이 학생이 그 단계를 한 번이라도 시도했으면 묶는다
+  const groups = stages.map((stage) => {
+    const attempts = state.sessions
+      .map((session, idx) => ({ session, idx }))
+      .filter((x) => x.session.stageName === stage.name && x.session.items.some(Boolean));
+    return { stageName: stage.name, attempts };
+  }).filter((g) => g.attempts.length > 0);
 
-  if (!sessionsWithData.length) {
+  if (!groups.length) {
     app.innerHTML = `
       <p>아직 시도한 기록이 없어요</p>
-      <button class="big-btn" id="closeBtn">단계 목록으로</button>
+      <button class="secondary-btn" id="closeBtn">단계 목록으로</button>
+      <button class="big-btn" id="toStudentListBtn">학생 목록으로</button>
     `;
-  } else {
-    const rows = sessionsWithData.slice().reverse().map(({ session, idx }) => {
-      const avg = sessionAverage(session);
-      const done = session.items.filter(Boolean).length;
-      const total = session.total || done;
-      return `
-        <button class="stage-btn" data-session-idx="${idx}" style="text-align:left;">
-          ${session.stageName} — 평균 ${avg}점 (${done}/${total}문항)
-        </button>
-      `;
-    }).join('');
-    app.innerHTML = `
-      <p>지금까지의 결과 (탭하면 자세히 볼 수 있어요)</p>
-      ${rows}
-      <br/>
-      <button class="big-btn" id="closeBtn">단계 목록으로</button>
-    `;
-    app.querySelectorAll('[data-session-idx]').forEach((btn) => {
-      btn.onclick = () => {
-        state.viewingSessionIdx = Number(btn.dataset.sessionIdx);
-        state.screen = 'sessionDetail';
-        render();
-      };
-    });
+    document.getElementById('closeBtn').onclick = () => { state.screen = 'stageList'; render(); };
+    document.getElementById('toStudentListBtn').onclick = () => { state.screen = 'studentList'; render(); };
+    return;
   }
+
+  const rows = groups.map((g) => {
+    // sessions는 시도한 순서대로 뒤에 쌓이므로, 배열의 마지막 항목이 가장 최근 시도다
+    const latest = g.attempts[g.attempts.length - 1];
+    const avg = sessionAverage(latest.session);
+    const passed = avg !== null && avg >= 70;
+    return `
+      <div class="result-row" data-group-idx="${groups.indexOf(g)}">
+        <div class="result-row-main">
+          <span class="result-stage-name">${g.stageName}</span>
+          <span class="result-badge ${passed ? 'pass' : 'fail'}">${passed ? '도달' : '보완 필요'}</span>
+        </div>
+        <div class="result-row-sub">최근 점수 ${avg}점 · 시도 ${g.attempts.length}회</div>
+      </div>
+    `;
+  }).join('');
+
+  app.innerHTML = `
+    <p class="section-title" style="margin-bottom:2px;">🔍 검사 결과</p>
+    <p class="hint" style="margin-top:0;">항목을 탭하면 자세한 내용을 볼 수 있어요</p>
+    ${rows}
+    <br/>
+    <button class="secondary-btn" id="closeBtn">단계 목록으로</button>
+    <button class="big-btn" id="toStudentListBtn">학생 목록으로</button>
+  `;
+  app.querySelectorAll('[data-group-idx]').forEach((el) => {
+    el.onclick = () => {
+      const group = groups[Number(el.dataset.groupIdx)];
+      if (group.attempts.length === 1) {
+        // 시도가 한 번뿐이면 목록을 거치지 않고 바로 문항별 상세로 이동
+        state.viewingSessionIdx = group.attempts[0].idx;
+        state.sessionDetailBack = 'history';
+        state.screen = 'sessionDetail';
+      } else {
+        state.historyGroup = group;
+        state.screen = 'stageAttempts';
+      }
+      render();
+    };
+  });
   document.getElementById('closeBtn').onclick = () => { state.screen = 'stageList'; render(); };
+  document.getElementById('toStudentListBtn').onclick = () => { state.screen = 'studentList'; render(); };
 }
+
+// 한 단계를 여러 번 시도했을 때, 그중 어떤 시도를 볼지 고르는 중간 화면.
+function renderStageAttempts() {
+  const group = state.historyGroup;
+  const rows = group.attempts.map((a, i) => {
+    const avg = sessionAverage(a.session);
+    const done = a.session.items.filter(Boolean).length;
+    const total = a.session.total || done;
+    return `<button class="stage-btn" data-attempt-idx="${i}" style="text-align:left;">${i + 1}차 시도 — 평균 ${avg}점 (${done}/${total}문항)</button>`;
+  }).join('');
+  app.innerHTML = `
+    <div class="top-actions">
+      <button class="pill-btn" id="backBtn">← 검사 결과로</button>
+      <span style="font-weight:600;">${group.stageName}</span>
+    </div>
+    ${rows}
+  `;
+  document.getElementById('backBtn').onclick = () => { state.screen = 'history'; render(); };
+  app.querySelectorAll('[data-attempt-idx]').forEach((btn) => {
+    btn.onclick = () => {
+      state.viewingSessionIdx = group.attempts[Number(btn.dataset.attemptIdx)].idx;
+      state.sessionDetailBack = 'stageAttempts';
+      state.screen = 'sessionDetail';
+      render();
+    };
+  });
+}
+
+// 세션 상세 화면: 그 세션에서 푼 문항마다 점수를 보여주고, 정답(pass=true)이 아닌 문항에만
+// 왜 감점됐는지 이유(it.feedback)를 함께 보여준다 (맞은 문항까지 이유를 보여주면 번잡하기 때문).
+// "결과 목록으로" 버튼은 여기 들어오기 전 화면(history 또는 stageAttempts)으로 되돌아간다.
+// analyzeError 태그만으로 이미 다 설명되는, 정보값 없는 뻔한 문구들. 이 문구들은 오류 태그
+// 배지 아래에 다시 보여주지 않는다 (2026-09-02, "같은 말이 반복돼서 가독성이 안 좋다"는 피드백 반영).
+// 태그만으로는 알 수 없는 진짜 세부 이유(예: SNR·유창성 관련 설명)일 때만 아래에 추가로 보여준다.
+const GENERIC_FEEDBACK_TEXTS = new Set([
+  '받침이 정확하지 않아요',
+  '목표 글자와 다른 소리예요. 다시 발음해보세요',
+  '모르겠다고 답함',
+]);
 
 function renderSessionDetail() {
   const session = state.sessions[state.viewingSessionIdx];
   const avg = sessionAverage(session);
   const rows = session.items.map((it) => {
     if (!it) return '';
+    // recognizedText가 undefined인 데는 두 가지 이유가 있다: ① "모르겠어요"/"잘 발음했어요
+    // (선생님 확인)"처럼 애초에 녹음·인식을 거치지 않고 만들어진 항목이라 그런 경우, ② 이 항목을
+    // 저장할 당시 아직 인식된 소리를 기록하지 않던 예전 버전(2026-09-02 이전)이라 그런 경우.
+    // ①을 ②로 잘못 표시하면 "오늘 답한 것도 예전 기록"이라고 오해하게 되므로 먼저 구분한다.
+    const recognizedCell = it.feedback === '모르겠다고 답함' ? '(모르겠음)'
+      : it.feedback === '선생님이 정확한 발음으로 확인함' ? '(선생님 확인)'
+      : typeof it.recognizedText === 'string' ? (it.recognizedText ? `"${escapeHtml(it.recognizedText)}"` : '(인식 안 됨)')
+      : '(예전 기록)';
+    // 오류 내용 칸: 07/08번 문서 용어로 분류한 태그(예: 받침 탈락, 초성 오류)를 보여주고,
+    // 태그만으로 설명이 안 되는 경우에만(예: 유창성 문제의 구체적 사유) 문구를 추가로 보여준다.
+    const errorCell = it.pass ? '' : `
+      ${analyzeError(it).map((tag) => `<span class="error-tag">${tag}</span>`).join('')}
+      ${GENERIC_FEEDBACK_TEXTS.has(it.feedback) ? '' : `<div style="margin-top:3px;">${it.feedback}</div>`}
+    `;
     return `
       <tr>
-        <td style="text-align:left; padding:4px 8px;">${it.text}</td>
-        <td style="padding:4px 8px; color:${it.pass ? '#27ae60' : '#e74c3c'}; font-weight:bold;">${it.accuracy}점</td>
-        <td style="text-align:left; padding:4px 8px; color:#888; font-size:13px;">${it.pass ? '' : it.feedback}</td>
+        <td class="left">${it.text}</td>
+        <td style="color:${it.pass ? '#27ae60' : '#e74c3c'}; font-weight:bold;">${it.accuracy}점</td>
+        <td class="left">${recognizedCell}</td>
+        <td class="left">${errorCell}</td>
       </tr>
     `;
   }).join('');
   app.innerHTML = `
-    <p>${session.stageName} — 평균 ${avg}점</p>
-    <table style="width:100%; border-collapse:collapse; font-size:14px;">${rows}</table>
+    <p style="font-weight:600;">${session.stageName} — 평균 ${avg}점</p>
+    <table class="report-table">
+      <thead>
+        <tr>
+          <th class="left">문항</th>
+          <th>점수</th>
+          <th class="left">인식된 소리</th>
+          <th class="left">오류 내용</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
     <br/>
-    <button class="big-btn" id="backBtn">결과 목록으로</button>
+    <div class="nav-row">
+      <div class="nav-left"></div>
+      <div class="nav-center"><button class="secondary-btn" id="backBtn">결과 목록으로</button></div>
+      <div class="nav-right"><button class="secondary-btn" id="toStudentListBtn">학생 목록으로</button></div>
+    </div>
   `;
-  document.getElementById('backBtn').onclick = () => { state.screen = 'history'; render(); };
+  document.getElementById('backBtn').onclick = () => { state.screen = state.sessionDetailBack || 'history'; render(); };
+  document.getElementById('toStudentListBtn').onclick = () => { state.screen = 'studentList'; render(); };
 }
 
+// ===== 인쇄용 검사지 리포트 (2026-09-02 추가) =====
+// 참고했던 "한글또박또박" 검사지(학생 정보 / 종합결과 / 항목별 세부결과 표 구조)를 본떠서,
+// 우리 데이터(6개 단계별 세션 기록)로 비슷한 형태의 리포트를 만든다. 화면에 그대로 표시하고,
+// "인쇄" 버튼을 누르면 브라우저 자체 인쇄 기능(window.print)으로 종이 출력 또는 PDF 저장이 된다
+// (별도 PDF 라이브러리 없이 CSS의 @media print 규칙만으로 인쇄용 레이아웃을 만든다).
+
+// 전체 평균 점수를 보고 "해득 수준" 문구를 정하는 기준. 등급 경계는 임의로 정한 값이라
+// 실제 사용해보면서 필요하면 조정하면 된다.
+function achievementLevel(avg) {
+  if (avg === null) return '검사 전';
+  if (avg >= 90) return '매우 잘함';
+  if (avg >= 70) return '잘함';
+  if (avg >= 50) return '보통';
+  return '미흡';
+}
+
+// "3. 항목별 세부 결과" 표의 "인식된 소리" 칸에 쓸 문구.
+// recognizedText가 목표 글자와 똑같은 경우(예: '따'를 '따'로 정확히 인식)는 발음 자체가
+// 틀린 게 아니라 Azure가 유창성/음량 같은 다른 세부 기준에서 감점한 경우다 - 표에는 그대로
+// "따"라고 보여주고(옆 "오답 문항" 칸도 "따"라 같은 글자가 나란히 보임), 왜 감점됐는지는
+// 세션 상세 화면의 "오류 내용" 칸이나 아래 지도 방안에서 설명한다.
+function wrongItemRecognizedLabel(it) {
+  if (it.feedback === '모르겠다고 답함') return '(모르겠음)';
+  if (typeof it.recognizedText !== 'string') return '(예전 기록)';
+  return it.recognizedText || '(인식 안 됨)';
+}
+
+// 오답 문항들을 analyzeError로 분류한 태그별로 묶어서, ERROR_TAG_ADVICE의 지도 문장을 만든다
+// (태그 하나당 문장 하나). 세션 상세 화면(renderSessionDetail)의 오류 태그와 정확히 같은
+// 분류 기준(analyzeError)을 쓴다.
+function summarizeErrorTypes(wrongItems) {
+  const byTag = {};
+  wrongItems.forEach((it) => {
+    analyzeError(it).forEach((tag) => {
+      (byTag[tag] = byTag[tag] || []).push(it);
+    });
+  });
+  return Object.keys(byTag).map((tag) => {
+    const advice = ERROR_TAG_ADVICE[tag];
+    return advice ? advice(byTag[tag]) : `${tag} 오류가 있었어요. 반복 연습시켜보세요.`;
+  });
+}
+
+// ===== 4. 추천 학생 지도 방안 (2026-09-02 추가, 2026-09-02 가독성 개선) =====
+// 리포트를 열 때마다 AI에게 실시간으로 물어보는 대신, llm-wiki 07/08번 문서(발음지도 참고자료,
+// 찬찬한글 참고자료)에 정리해둔 단계별 지도 원리를 미리 문장으로 써두고, 이 학생이 "보완 필요"로
+// 나온 단계에 해당하는 문장만 골라 보여주는 방식을 택했다 (사용자가 규칙 기반 방식을 선택함,
+// 2026-09-02 - 실시간 AI 호출은 유료 API·서버·인터넷 연결이 추가로 필요해서 보류했다).
+// 이 문장은 각 단계에서 공통으로 적용되는 "기본 지도 원리" 한 줄이고, 그 단계에서 실제로 어떤
+// 유형의 오류가 있었는지는 summarizeErrorTypes가 만드는 문장을 하위 항목으로 따로 붙인다.
+const STAGE_ADVICE = {
+  '1. 모음': '모음은 자음보다 먼저 익혀야 하는 가장 기초적인 소리예요(찬찬한글 1단원). 입 모양과 밝은 소리(ㅏ,ㅗ)/어두운 소리(ㅓ,ㅜ)의 차이를 천지인 원리로 설명하며 또박또박 소리 내는 연습시켜보세요.',
+  '2. 자음': '자음은 조음 위치(입 모양)와 가획 원리로 설명하면 이해하기 쉬워요(찬찬한글 2단원). 조음 위치가 비슷한 자음끼리(예: ㅁ↔ㅂ, ㅇ↔ㄱ) 묶어서 소리 차이를 비교하며 연습시켜보세요.',
+  '3. 받침 없는 단어': '받침 없는 글자를 자모 단위로 합성하는 연습이 더 필요해요(찬찬한글 3단원). 의미 있는 단어뿐 아니라 무의미 단어도 섞어서, 뜻을 추측하는 게 아니라 실제 소릿값을 아는지 확인하며 연습시켜보세요.',
+  '4. 이중모음': '복잡한 모음(이중모음)은 기본 모음보다 어려운 단계예요(찬찬한글 4단원). 입 모양이 바뀌는 이중모음(예: ㅘ, ㅝ)을 천천히 끊어서 발음한 뒤 이어 붙여 읽는 연습시켜보세요.',
+  '5. 이중모음 단어': '이중모음이 들어간 단어 읽기에서 어려움을 보였어요(찬찬한글 5단원). 4단원(이중모음 낱자)을 먼저 확실히 다진 뒤, 짧은 단어부터 다시 연습시켜보세요.',
+  '6. 대표받침': '대표받침(ㄱㄴㄷㄹㅁㅂㅇ) 7개를 소리와 표기가 일치하는 낱말부터 하나씩 확인해요(찬찬한글 6~7단원). 받침 소리를 살짝 과장해서 들려주며 연습시켜보세요.',
+};
+
+// 한 자리 숫자 정도의 하위 항목에 쓸 한글 순서 표시(가,나,다...). list-style-type의 한글 지원은
+// 브라우저/인쇄 환경마다 다를 수 있어서, 직접 문자열로 붙이는 방식을 쓴다.
+const KO_ORDINALS = ['가', '나', '다', '라', '마', '바', '사', '아', '자', '차'];
+
+// stageRows(renderReport에서 계산한 단계별 결과)를 보고, "보완 필요"로 나온 단계마다
+// "N. 단계명" 큰 항목 + "가/나/다..." 하위 항목(기본 지도 원리 + 오류 유형별 설명) 구조의
+// HTML을 만든다. 보완 필요한 단계가 없으면 칭찬 문구 하나만 보여준다.
+function renderAdviceSection(stageRows) {
+  const failed = stageRows.filter((r) => r.tried && !r.passed);
+  if (!failed.length) {
+    return `<p style="margin:4px 0;">지금까지 실시한 항목에서는 특별히 보완할 부분이 보이지 않아요. 다음 단계로 진행해도 좋아요.</p>`;
+  }
+  return failed.map((r, i) => {
+    const subItems = [STAGE_ADVICE[r.stageName] || `${r.stageName}에서 보완이 필요해요.`, ...summarizeErrorTypes(r.wrongItems)];
+    const subRows = subItems.map((text, j) => `
+      <p style="margin:3px 0 3px 20px;">${KO_ORDINALS[j] || j + 1}. ${text}</p>
+    `).join('');
+    return `
+      <div style="margin-bottom:10px;">
+        <p style="margin:0; font-weight:600;">${i + 1}. ${r.stageName}</p>
+        ${subRows}
+      </div>
+    `;
+  }).join('');
+}
+
+function renderReport() {
+  const student = state.reportStudent;
+  const today = new Date().toLocaleDateString('ko-KR');
+
+  // 단계마다 "가장 최근 시도"만 리포트에 반영한다 (여러 번 시도했어도 최신 실력을 보여주기 위함)
+  const stageRows = stages.map((stage) => {
+    const attempts = student.sessions.filter((s) => s.stageName === stage.name && s.items.some(Boolean));
+    if (!attempts.length) return { stageName: stage.name, tried: false };
+    const latest = attempts[attempts.length - 1];
+    const doneItems = latest.items.filter(Boolean);
+    const passedCount = doneItems.filter((it) => it.pass).length;
+    const avg = sessionAverage(latest);
+    // wrongItems: 오답 문항 원본(문항/인식된 소리/오류 이유)을 그대로 들고 있다가,
+    // 아래 표에는 "문항→오반응" 형태로, 지도 방안에는 오류 유형별 요약으로 각각 가공해서 쓴다.
+    const wrongItems = doneItems.filter((it) => !it.pass);
+    return {
+      stageName: stage.name,
+      tried: true,
+      passedCount,
+      total: latest.total || doneItems.length,
+      avg,
+      passed: avg !== null && avg >= 70,
+      wrongItems,
+      createdAt: latest.createdAt,
+    };
+  });
+
+  const triedRows = stageRows.filter((r) => r.tried);
+  const overallAvg = triedRows.length
+    ? Math.round(triedRows.reduce((sum, r) => sum + r.avg, 0) / triedRows.length)
+    : null;
+  const lastDate = triedRows.length
+    ? triedRows.reduce((latest, r) => (!latest || r.createdAt > latest ? r.createdAt : latest), null)
+    : null;
+  const failedStages = triedRows.filter((r) => !r.passed).map((r) => r.stageName);
+
+  const comment = !triedRows.length
+    ? '아직 검사를 시작하지 않았어요.'
+    : failedStages.length
+      ? `보충이 필요한 항목: ${failedStages.join(', ')}`
+      : '지금까지 실시한 모든 항목에서 우수하게 정반응하였습니다.';
+
+  // "오답 문항"/"인식된 소리"를 한 칸에 <br>로 여러 줄 몰아넣던 이전 방식은, 문항이 여러 개면
+  // 두 칸의 줄 수가 눈으로 정확히 대응되는지 알아보기 어렵다는 피드백을 받았다(2026-09-02).
+  // 그래서 오답 문항 하나당 표의 행(<tr>)을 하나씩 따로 만들고, 그 대신 "항목/점수/도달여부"
+  // 3칸은 rowspan으로 묶어서 한 번만 보여주는, 실제 진단 보고서에서 흔히 쓰는 구조로 바꿨다.
+  const tableRows = stageRows.map((r) => {
+    const items = r.tried && r.wrongItems.length ? r.wrongItems : null;
+    const rowCount = items ? items.length : 1;
+    // 한 단계 그룹이 시작하는 첫 행 위에 살짝 굵은 선을 그어서 단계끼리 구분되게 한다
+    const groupTop = 'border-top:2px solid #cbd5e1;';
+    const stageCells = `
+      <td class="left" rowspan="${rowCount}" style="${groupTop}">${r.stageName}</td>
+      <td rowspan="${rowCount}" style="${groupTop}">${r.tried ? `${r.passedCount}/${r.total}` : '-'}</td>
+      <td rowspan="${rowCount}" style="${groupTop}">${r.tried ? (r.passed ? '도달' : '미도달') : '미실시'}</td>
+    `;
+    if (!items) {
+      return `<tr>${stageCells}<td class="left" style="${groupTop}">-</td><td class="left" style="${groupTop}">-</td></tr>`;
+    }
+    return items.map((it, i) => {
+      const top = i === 0 ? groupTop : '';
+      const detail = `<td class="left" style="${top}">${it.text}</td><td class="left" style="${top}">${wrongItemRecognizedLabel(it)}</td>`;
+      return i === 0 ? `<tr>${stageCells}${detail}</tr>` : `<tr>${detail}</tr>`;
+    }).join('');
+  }).join('');
+
+  app.innerHTML = `
+    <div class="top-actions no-print">
+      <button class="pill-btn" id="backBtn">← 학생 목록으로</button>
+      <button class="pill-btn primary" id="printBtn">🖨 인쇄 / PDF로 저장</button>
+    </div>
+    <p style="font-weight:700; font-size:18px; margin-bottom:0;">한글또박 발음 지도 - 검사 결과 리포트</p>
+    <p class="hint" style="margin-top:2px;">출력일: ${today}</p>
+
+    <p class="section-title">1. 학생 정보</p>
+    <table class="report-table">
+      <thead><tr><th>반</th><th>번호</th><th>이름</th><th>다문화</th><th>기초학습지원대상</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>${escapeHtml(state.reportClassName)}</td>
+          <td>${student.number}</td>
+          <td>${student.name ? escapeHtml(student.name) : '(이름 없음)'}</td>
+          <td>${student.multicultural ? 'O' : '-'}</td>
+          <td>${student.basic_support ? 'O' : '-'}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="section-title">2. 종합 결과</p>
+    <table class="report-table">
+      <thead><tr><th>검사일시</th><th>전체 평균</th><th>수준</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>${lastDate ? new Date(lastDate).toLocaleDateString('ko-KR') : '-'}</td>
+          <td>${overallAvg === null ? '-' : overallAvg + '점'}</td>
+          <td>${achievementLevel(overallAvg)}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="report-comment">${comment}</div>
+
+    <p class="section-title">3. 항목별 세부 결과</p>
+    <table class="report-table">
+      <thead><tr><th class="left">항목</th><th>점수(맞은 문항/전체)</th><th>도달여부</th><th class="left">오답 문항</th><th class="left">인식된 소리</th></tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+
+    <p class="section-title">4. 추천 학생 지도 방안</p>
+    <div class="report-comment">
+      ${renderAdviceSection(stageRows)}
+    </div>
+  `;
+  document.getElementById('backBtn').onclick = () => { state.screen = 'studentList'; render(); };
+  document.getElementById('printBtn').onclick = () => window.print();
+}
+
+// ===== 학급 통계 (2026-09-02 추가) =====
+// 사용자가 참고로 보여준 "한글또박또박" 프로그램의 학급 통계 화면을 참고하되, 그 화면에 있던
+// 1차/2차 검사 회차 구분·12개 세부항목·유창성/쓰기 채점처럼 지금 우리 앱에 아예 없는 개념은
+// 새로 만들지 않고, 지금 있는 6단계 구조 그대로 반 전체를 집계하는 식으로 범위를 단순화했다
+// (2026-09-02, 사용자와 상의해서 결정). 그래프는 Chart.js를 CDN으로 불러와 그린다.
+
+// Chart.js로 차트 하나를 그린다. 같은 화면을 다시 그릴 때 같은 id의 canvas에 차트가 이미 있으면
+// 먼저 지우고 새로 만든다 (안 그러면 "Canvas is already in use" 오류가 난다).
+function renderChart(canvasId, config) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const existing = Chart.getChart(canvas);
+  if (existing) existing.destroy();
+  new Chart(canvas, config);
+}
+
+// 반 하나(cls)의 통계를 계산한다. 학생별로 "지금까지 실시한 모든 문항의 평균"과 "단계별
+// 가장 최근 시도의 평균"을 먼저 구해두고, 그 값들을 학급 전체/다문화 학생/기초학습지원대상
+// 학생 단위로 다시 평균 내는 방식이다.
+function computeClassStats(cls) {
+  const studentStats = cls.students.map((s) => {
+    const allScores = (s.sessions || []).flatMap((sess) => sess.items.filter(Boolean).map((it) => it.accuracy));
+    const overallAvg = allScores.length ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : null;
+    const stageAvgs = stages.map((stage) => {
+      const attempts = (s.sessions || []).filter((sess) => sess.stageName === stage.name && sess.items.some(Boolean));
+      if (!attempts.length) return null;
+      return sessionAverage(attempts[attempts.length - 1]);
+    });
+    const lastCreatedAt = (s.sessions || []).reduce((latest, sess) => {
+      if (!sess.items.some(Boolean)) return latest;
+      return !latest || sess.createdAt > latest ? sess.createdAt : latest;
+    }, null);
+    return { student: s, overallAvg, stageAvgs, lastCreatedAt, tried: allScores.length > 0 };
+  });
+
+  const triedCount = studentStats.filter((x) => x.tried).length;
+  const notTriedNumbers = studentStats.filter((x) => !x.tried).map((x) => x.student.number);
+  const lastAccessDate = studentStats.reduce(
+    (latest, x) => (x.lastCreatedAt && (!latest || x.lastCreatedAt > latest) ? x.lastCreatedAt : latest),
+    null
+  );
+
+  // 해득수준 4분류: 미검사(한 번도 안 함) / 미해득(<50점) / 보충(50~69점) / 해득(70점 이상,
+  // 우리 앱의 기존 '합격' 기준과 통일).
+  const levelCounts = { 해득: 0, 보충: 0, 미해득: 0, 미검사: 0 };
+  studentStats.forEach((x) => {
+    if (!x.tried) levelCounts['미검사']++;
+    else if (x.overallAvg >= 70) levelCounts['해득']++;
+    else if (x.overallAvg >= 50) levelCounts['보충']++;
+    else levelCounts['미해득']++;
+  });
+
+  // filterFn을 만족하는 학생들만 골라서, 6단계 각각의 학급(집단) 평균을 구한다.
+  // (그 단계를 아무도 안 했으면 null - Chart.js가 그 막대만 비워서 그려준다)
+  function stageAverages(filterFn) {
+    const filtered = studentStats.filter(filterFn);
+    return stages.map((_, i) => {
+      const vals = filtered.map((x) => x.stageAvgs[i]).filter((v) => v !== null);
+      return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+    });
+  }
+
+  // 오류 유형(analyzeError 태그)별로 "그 오류를 낸 학생" 목록을 모은다. 학생 한 명이 같은
+  // 유형의 오류를 여러 단계/문항에서 냈어도 그 유형 아래에는 한 번만 나오게 한다(중복 방지).
+  // 각 단계는 (다른 통계처럼) 가장 최근 시도만 본다 - 이미 고친 옛날 오류까지 끌어오지 않기 위함.
+  const errorTypeStudents = {};
+  cls.students.forEach((s) => {
+    const tagsForThisStudent = new Set();
+    stages.forEach((stage) => {
+      const attempts = (s.sessions || []).filter((sess) => sess.stageName === stage.name && sess.items.some(Boolean));
+      if (!attempts.length) return;
+      const latest = attempts[attempts.length - 1];
+      latest.items.filter((it) => it && !it.pass).forEach((it) => {
+        // '(예전 기록)'은 진짜 오류 유형이 아니라 recognizedText를 저장하기 전 옛날 데이터라는
+        // 표시일 뿐이라, 학급통계의 "오류 유형별 학생" 목록에는 굳이 보여주지 않는다.
+        analyzeError(it).filter((tag) => tag !== '(예전 기록)').forEach((tag) => tagsForThisStudent.add(tag));
+      });
+    });
+    tagsForThisStudent.forEach((tag) => {
+      (errorTypeStudents[tag] = errorTypeStudents[tag] || []).push(`${s.number}. ${s.name ? escapeHtml(s.name) : '(이름 없음)'}`);
+    });
+  });
+
+  return {
+    totalCount: cls.students.length,
+    triedCount,
+    notTriedNumbers,
+    lastAccessDate,
+    levelCounts,
+    overallStageAvgs: stageAverages(() => true),
+    multiStageAvgs: stageAverages((x) => x.student.multicultural),
+    multiNumbers: studentStats.filter((x) => x.student.multicultural).map((x) => x.student.number),
+    basicStageAvgs: stageAverages((x) => x.student.basic_support),
+    basicNumbers: studentStats.filter((x) => x.student.basic_support).map((x) => x.student.number),
+    errorTypeStudents,
+  };
+}
+
+// 6단계 이름을 라벨로, data 배열을 값으로 쓰는 학급 평균 막대그래프 설정을 만든다 (재사용).
+function classBarChartConfig(data) {
+  return {
+    type: 'bar',
+    data: {
+      labels: stages.map((s) => s.name),
+      datasets: [{ label: '평균 점수', data, backgroundColor: '#2563eb', borderRadius: 4 }],
+    },
+    options: {
+      responsive: true,
+      scales: { y: { min: 0, max: 100, ticks: { stepSize: 20 } } },
+      plugins: { legend: { display: false } },
+    },
+  };
+}
+
+// computeClassStats가 만든 errorTypeStudents({태그: [학생 목록]})를,
+// "받침 탈락: 3. 김상혁, 7. 이지은" 형태의 목록 HTML로 만든다. 태그 순서는 ERROR_TAG_ADVICE에
+// 정의된 순서를 그대로 따라서, 화면을 다시 그릴 때마다 순서가 들쭉날쭉하지 않게 한다.
+function renderErrorTypeStudents(errorTypeStudents) {
+  const tags = Object.keys(ERROR_TAG_ADVICE).filter((tag) => errorTypeStudents[tag] && errorTypeStudents[tag].length);
+  if (!tags.length) return '<p class="hint">아직 발견된 오류 유형이 없어요.</p>';
+  return tags.map((tag) => `
+    <p style="margin:8px 0;"><span class="error-tag">${tag}</span> ${errorTypeStudents[tag].join(', ')}</p>
+  `).join('');
+}
+
+function renderClassStats() {
+  const cls = currentClass();
+  const stats = computeClassStats(cls);
+  const progress = stats.totalCount ? Math.round((stats.triedCount / stats.totalCount) * 100) : 0;
+  // CDN에서 Chart.js를 못 불러왔을 때(인터넷 연결 문제 등 - 엑셀 라이브러리 XLSX 체크와 같은 이유)
+  // canvas만 덩그러니 놓고 "Chart is not defined" 오류로 화면이 깨지는 대신, 안내 문구로 대체한다.
+  const chartAvailable = typeof Chart !== 'undefined';
+  const chartOrFallback = (canvasId) => chartAvailable
+    ? `<canvas id="${canvasId}"></canvas>`
+    : '<p class="hint">그래프 라이브러리를 불러오지 못했어요 (인터넷 연결을 확인해주세요).</p>';
+
+  app.innerHTML = `
+    <div class="top-actions no-print">
+      <button class="pill-btn" id="backBtn">← 학생 목록으로</button>
+      <span style="font-weight:600;">${escapeHtml(cls.name)} · 학급 통계</span>
+    </div>
+
+    <div class="stats-summary-card">
+      <p style="font-weight:700; font-size:17px; margin:0 0 8px 0;">${escapeHtml(cls.name)}</p>
+      <p style="margin:2px 0;">총 인원: ${stats.totalCount}명</p>
+      <p style="margin:2px 0;">검사 실시 인원: ${stats.triedCount}명 · 진행률 ${progress}%</p>
+      <p style="margin:2px 0;">최근 검사일: ${stats.lastAccessDate ? new Date(stats.lastAccessDate).toLocaleDateString('ko-KR') : '-'}</p>
+      ${stats.notTriedNumbers.length ? `<p class="hint" style="margin:8px 0 0 0;">검사 미실시 학생 번호: ${stats.notTriedNumbers.join(', ')}</p>` : ''}
+    </div>
+
+    <div class="stats-charts-row">
+      <div class="stats-chart-box">
+        <p class="section-title">검사 응시율</p>
+        ${chartOrFallback('chartAttendance')}
+      </div>
+      <div class="stats-chart-box">
+        <p class="section-title">한글 해득수준 비율</p>
+        ${chartOrFallback('chartLevel')}
+      </div>
+    </div>
+
+    <div class="stats-chart-box wide">
+      <p class="section-title">세부항목별 평균점수 (전체 학급)</p>
+      ${chartOrFallback('chartOverall')}
+    </div>
+
+    <div class="stats-chart-box wide">
+      <p class="section-title">세부항목별 평균점수 (다문화 학생집단)</p>
+      ${stats.multiNumbers.length
+        ? `${chartOrFallback('chartMulti')}<p class="hint">해당 학생 번호: ${stats.multiNumbers.join(', ')}</p>`
+        : '<p class="hint">체크된 학생이 없어요.</p>'}
+    </div>
+
+    <div class="stats-chart-box wide">
+      <p class="section-title">세부항목별 평균점수 (기초학습지원대상 학생집단)</p>
+      ${stats.basicNumbers.length
+        ? `${chartOrFallback('chartBasic')}<p class="hint">해당 학생 번호: ${stats.basicNumbers.join(', ')}</p>`
+        : '<p class="hint">체크된 학생이 없어요.</p>'}
+    </div>
+
+    <div class="stats-chart-box wide">
+      <p class="section-title">오류 유형별 학생</p>
+      ${renderErrorTypeStudents(stats.errorTypeStudents)}
+    </div>
+  `;
+
+  document.getElementById('backBtn').onclick = () => { state.screen = 'studentList'; render(); };
+
+  if (!chartAvailable) return;
+
+  renderChart('chartAttendance', {
+    type: 'doughnut',
+    data: {
+      labels: ['응시', '미응시'],
+      datasets: [{ data: [stats.triedCount, stats.totalCount - stats.triedCount], backgroundColor: ['#2563eb', '#e5e7eb'] }],
+    },
+    options: { plugins: { legend: { position: 'bottom' } } },
+  });
+  renderChart('chartLevel', {
+    type: 'pie',
+    data: {
+      labels: ['해득', '보충', '미해득', '미검사'],
+      datasets: [{
+        data: [stats.levelCounts['해득'], stats.levelCounts['보충'], stats.levelCounts['미해득'], stats.levelCounts['미검사']],
+        backgroundColor: ['#16a34a', '#86efac', '#f97316', '#fde047'],
+      }],
+    },
+    options: { plugins: { legend: { position: 'bottom' } } },
+  });
+  renderChart('chartOverall', classBarChartConfig(stats.overallStageAvgs));
+  if (stats.multiNumbers.length) renderChart('chartMulti', classBarChartConfig(stats.multiStageAvgs));
+  if (stats.basicNumbers.length) renderChart('chartBasic', classBarChartConfig(stats.basicStageAvgs));
+}
+
+// 지금 세션에서 풀고 있는 문항(state.itemIdx번째)의 데이터({ text: '...' })를 반환한다.
 function currentItem() {
   return state.sessionItems[state.itemIdx];
 }
 
+// 문제 풀이 화면: 목표 글자, "듣기" 버튼, 마이크 버튼을 한 화면에 모아 보여준다.
+// (원래는 "듣기"와 "말하기 연습"이 서로 다른 화면이었는데, 매번 화면을 넘나드는 게 번거롭다는
+//  피드백을 받아 하나로 합쳤다 - llm-wiki/11-진행상황.md의 "10차 수정" 참고)
+// 화면이 그려지자마자 맨 아래 speak(item.text) 호출로 목표 발음을 자동으로 한 번 들려준다.
 function renderPractice() {
   const stage = stages[state.stageIdx];
   const item = currentItem();
@@ -645,11 +1369,17 @@ function renderPractice() {
   speak(item.text);
 }
 
+// 지금까지 푼 문항들의 채점 결과(session.items 배열 전체)를 Supabase sessions 테이블에 덮어써 저장한다.
+// 문항을 하나 풀 때마다(또는 "모르겠어요"를 누를 때마다) 호출해서, 검사 도중 앱이 꺼지더라도
+// 그때까지 푼 만큼은 서버에 남아있게 한다. await 없이 호출하고 실패하면 콘솔에만 로그를 남긴다
+// (저장 실패로 화면 흐름을 막지 않기 위함).
 function saveSessionItems(session) {
   sb.from('sessions').update({ items: session.items }).eq('id', session.id)
     .then(({ error }) => { if (error) console.error('결과 저장 실패:', error); });
 }
 
+// "모르겠어요" 버튼 처리: 이 문항을 0점 처리하고 "모르겠다고 답함"으로 기록한 뒤 결과 화면으로 넘어간다.
+// 선생님이 결과 확인 화면에서 학생이 어떤 문항을 몰랐는지 구분해서 볼 수 있게 하기 위한 기능이다.
 function markDontKnow(itemText) {
   state.lastResult = {
     accuracy: 0,
@@ -672,6 +1402,11 @@ function markDontKnow(itemText) {
   render();
 }
 
+// ===== 듣기 기능 (TTS: Azure 음성 합성) =====
+// 목표 글자를 Azure의 고품질 한국어 음성(SunHi)으로 읽어준다.
+// (처음엔 브라우저 내장 TTS를 썼다가 발음 품질이 안 좋아서 Azure로 교체했다 - 11번 문서 참고)
+// 서버(/api/get-token)에서 매번 짧게 유효한 임시 토큰을 새로 받아 쓰고, Azure Speech Key 자체는
+// 브라우저 코드에 절대 넣지 않는다 (llm-wiki/10-음성인식-기술-선택.md의 API 키 보관 원칙).
 async function speak(text) {
   try {
     const tokenRes = await fetch('/api/get-token');
@@ -691,6 +1426,15 @@ async function speak(text) {
   }
 }
 
+// ===== 말하기 녹음 (Web Audio API로 16kHz mono PCM을 직접 만듦) =====
+// 브라우저의 기본 녹음 도구인 MediaRecorder를 쓰지 않고 Web Audio API로 직접 녹음하는 이유:
+// MediaRecorder의 기본 녹음 포맷(webm/opus)은 Azure 발음 평가 REST API가 공식 지원하는 포맷
+// (wav 또는 ogg/opus) 목록에 없어서, 채점이 제대로 되지 않는 문제가 있었다 (11번 문서 "3차 시도" 참고).
+// 그래서 마이크의 원본 소리 샘플을 직접 모은 뒤 아래 encodeWav()로 표준 WAV 파일을 만들어 보낸다.
+
+// 마이크 녹음을 시작한다.
+// ScriptProcessorNode(processor)가 일정 간격(4096 샘플)마다 마이크 입력을 넘겨주면,
+// 그 소리 샘플(Float32Array)을 chunks 배열에 계속 쌓아 담는다.
 async function startRecording(targetText) {
   const micBtn = document.getElementById('micBtn');
   const status = document.getElementById('status');
@@ -700,6 +1444,9 @@ async function startRecording(targetText) {
     const audioCtx = new AudioContextClass();
     const source = audioCtx.createMediaStreamSource(stream);
     const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    // ScriptProcessorNode가 실제로 동작하려면 오디오 그래프가 destination(스피커)까지 연결되어
+    // 있어야 한다. 그렇다고 마이크 소리를 그대로 스피커로 내보내면 하울링이 생기므로,
+    // 음량을 0으로 만드는 silentGain을 중간에 끼워 "소리는 안 나지만 연결은 되어있는" 상태로 만든다.
     const silentGain = audioCtx.createGain();
     silentGain.gain.value = 0;
 
@@ -722,6 +1469,8 @@ async function startRecording(targetText) {
   }
 }
 
+// 녹음을 멈추고, 그동안 모은 소리 샘플(chunks)을 하나로 합친 뒤
+// 16kHz로 다시 샘플링(resampleTo16k) → WAV 파일로 인코딩(encodeWav)해서 채점 요청(assessRecording)을 보낸다.
 function stopRecording() {
   const micBtn = document.getElementById('micBtn');
   const status = document.getElementById('status');
@@ -750,6 +1499,9 @@ function stopRecording() {
   assessRecording(wavBlob, targetText);
 }
 
+// 마이크의 원래 샘플레이트(보통 44100Hz나 48000Hz)를 Azure가 요구하는 16000Hz로 바꾼다.
+// 원본 샘플 사이의 위치(srcIndex)를 계산해서, 그 앞뒤 두 샘플 값을 거리 비율(frac)만큼 섞는
+// 선형 보간(linear interpolation) 방식으로 새 샘플 값을 근사한다.
 function resampleTo16k(float32Array, inputSampleRate) {
   if (inputSampleRate === 16000) return float32Array;
   const ratio = inputSampleRate / 16000;
@@ -765,10 +1517,15 @@ function resampleTo16k(float32Array, inputSampleRate) {
   return result;
 }
 
+// DataView의 offset 위치부터 문자열을 한 글자씩(1바이트) 써넣는다.
+// WAV 헤더에 들어가는 'RIFF', 'WAVE', 'fmt ', 'data' 같은 고정 문자열을 쓸 때 사용한다.
 function writeString(view, offset, string) {
   for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
 }
 
+// Float32 소리 샘플 배열을 표준 WAV 파일(44바이트 헤더 + 16bit PCM 데이터) 형식의 Blob으로 만든다.
+// WAV 파일 구조: RIFF 청크(파일 전체 정보) → fmt 청크(채널 수/샘플레이트/비트수 같은 설정값) →
+// data 청크(실제 소리 데이터). 아래 44바이트짜리 헤더가 정확히 이 구조를 그대로 손으로 채워 넣은 것이다.
 function encodeWav(samples, sampleRate) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
@@ -785,6 +1542,8 @@ function encodeWav(samples, sampleRate) {
   view.setUint16(34, 16, true);
   writeString(view, 36, 'data');
   view.setUint32(40, samples.length * 2, true);
+  // Web Audio API의 소리 샘플은 -1~1 사이의 실수(Float32)인데, WAV의 16bit PCM은
+  // -32768~32767 사이의 정수를 쓰므로, 범위를 -1~1로 한 번 자르고(clamp) 정수로 변환한다.
   let pos = 44;
   for (let i = 0; i < samples.length; i++, pos += 2) {
     const s = Math.max(-1, Math.min(1, samples[i]));
@@ -793,6 +1552,8 @@ function encodeWav(samples, sampleRate) {
   return new Blob([view], { type: 'audio/wav' });
 }
 
+// Azure 발음 평가 REST API가 요구하는 'Pronunciation-Assessment' HTTP 헤더 값을 만든다.
+// 채점 조건(목표 텍스트, 100점 만점, 음소 단위 세분화 등)을 담은 JSON을 Base64 문자열로 인코딩해서 돌려준다.
 function buildPronunciationHeader(referenceText) {
   const params = {
     ReferenceText: referenceText,
@@ -801,12 +1562,19 @@ function buildPronunciationHeader(referenceText) {
     Dimension: 'Comprehensive',
     EnableMiscue: true,
   };
+  // btoa()는 원래 영문/숫자 등 1바이트 문자만 Base64로 바꿀 수 있어서, ReferenceText에 들어가는
+  // 한글(여러 바이트로 이뤄진 UTF-8 문자)을 그대로 넣으면 오류가 난다. 그래서 JSON 문자열을 먼저
+  // UTF-8 바이트 배열로 바꾼 뒤(TextEncoder), 그 바이트들을 한 글자씩 문자로 옮겨 담아(binary)
+  // btoa가 다룰 수 있는 형태로 만들고 나서 Base64 인코딩한다.
   const utf8Bytes = new TextEncoder().encode(JSON.stringify(params));
   let binary = '';
   utf8Bytes.forEach((b) => { binary += String.fromCharCode(b); });
   return btoa(binary);
 }
 
+// Azure Speech-to-Text REST API에 WAV 녹음 파일을 보내 인식/채점 결과를 받아온다.
+// withAssessment가 true면 Pronunciation-Assessment 헤더를 함께 보내 발음 세부 점수까지 받고,
+// false면 그 헤더 없이 순수 인식만 요청한다 (이유는 아래 assessRecording의 설명 참고).
 async function recognizeSpeech(blob, region, token, targetText, withAssessment) {
   const url = `https://${region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=ko-KR&format=detailed`;
   const headers = {
@@ -819,17 +1587,23 @@ async function recognizeSpeech(blob, region, token, targetText, withAssessment) 
   return res.json();
 }
 
+// 문자열에서 한글 완성형 음절(가~힣)만 남기고 공백, 문장부호, 알파벳 등은 전부 지운다.
+// Azure가 인식 결과에 섞어 보내는 잡음 문자를 제거해 순수 한글끼리만 비교할 수 있게 하기 위함이다.
 function normalizeHangul(text) {
   return (text || '').replace(/[^가-힣]/g, '');
 }
 
-// 한글 음절 하나를 초성/중성/종성으로 분해 (예: '막' -> ㅁ,ㅏ,ㄱ)
+// 한글 음절 하나를 초성/중성/종성으로 분해한다 (예: '막' -> ㅁ,ㅏ,ㄱ).
+// 유니코드에서 한글 완성형 음절은 U+AC00('가')부터 시작해서
+// "초성 19개 × 중성 21개 × 종성 28개" 조합이 정해진 규칙대로 순서대로 배열돼 있다는 성질을 이용해,
+// 글자 코드값(code)에서 산술 연산만으로 초/중/종성 인덱스를 역산해낸다.
 const CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
 const JUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
 const JONG = ['','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
 
 function decomposeHangul(ch) {
   const code = ch.charCodeAt(0) - 0xac00;
+  // 0~11171(19*21*28-1) 범위를 벗어나면 완성형 한글 음절이 아니라는 뜻이므로 분해할 수 없다
   if (code < 0 || code > 11171) return null;
   return {
     cho: CHO[Math.floor(code / (21 * 28))],
@@ -838,17 +1612,20 @@ function decomposeHangul(ch) {
   };
 }
 
-// 목표 글자와 인식된 글자를 초/중/종성 단위로 비교해 0~1 유사도를 계산
+// 목표 글자와 인식된 글자를 같은 자리끼리(target[i] vs recognized[i]) 초/중/종성 단위로 비교해
+// 얼마나 겹치는지를 0~1 사이 값으로 계산한다. 값이 클수록 두 글자/단어가 비슷하다는 뜻이다.
+// (예: 목표 "막" vs 인식 "망" → 초성ㅁ·중성ㅏ는 같고 종성만 다름 → 슬롯 3개 중 2개 일치 → 약 0.67)
 function jamoSimilarity(target, recognized) {
   const len = Math.max(target.length, recognized.length);
   if (len === 0) return 0;
+  // totalSlots: 비교 대상이 된 초/중/종성 자리 수, matchedSlots: 그중 실제로 일치한 자리 수
   let totalSlots = 0;
   let matchedSlots = 0;
   for (let i = 0; i < len; i++) {
     const td = target[i] ? decomposeHangul(target[i]) : null;
     const rd = recognized[i] ? decomposeHangul(recognized[i]) : null;
     if (!td && !rd) continue;
-    // 초성/중성은 항상 비교 대상
+    // 초성/중성은 (둘 중 하나라도 이 위치에 글자가 있는 한) 항상 비교 대상에 포함시킨다
     totalSlots += 2;
     if (td && rd) {
       if (td.cho === rd.cho) matchedSlots++;
@@ -864,6 +1641,96 @@ function jamoSimilarity(target, recognized) {
   return totalSlots ? matchedSlots / totalSlots : 0;
 }
 
+// ===== 오답 점수 세분화 (2026-09-02, 사용자 요청) =====
+// 목표 글자를 정확히 못 맞혔을 때, 그냥 "얼마나 비슷한가"라는 하나의 숫자로 뭉뚱그리지 않고
+// "어떤 부분이 틀렸는가"를 먼저 구분한다. 초성/중성은 그 음절의 기본 소리 자체를 정하는
+// 요소라서, 이게 틀리면(예: '가'를 '나'로) 완전히 다른 소리를 낸 것이다. 반면 종성(받침)만
+// 다른 경우(예: '막'을 '망'으로)는 기본 소리는 맞게 냈고 받침 하나만 놓친 것이므로, 같은
+// "오답"이어도 교육적으로는 성격이 다르다. 이 둘을 뭉뚱그려 하나의 유사도 점수로 계산하면
+// (예전 방식) 초성이 완전히 틀렸는데도 50점 같은 애매하게 높은 점수가 나오는 문제가 있었다.
+
+// 같은 자리(index)의 목표 글자 한 개와 인식된 글자 한 개를 비교해서 차이의 종류를 분류한다.
+//   'exact'    - 초성·중성·종성이 모두 같음 (완전히 같은 음절)
+//   'jongDiff' - 초성·중성은 같은데 종성(받침)만 다름 (받침이 있고 없고 포함)
+//   'diff'     - 초성 또는 중성 자체가 다름, 또는 한쪽에만 글자가 있음(음절 수가 다름)
+function compareSyllable(targetCh, recognizedCh) {
+  const td = targetCh ? decomposeHangul(targetCh) : null;
+  const rd = recognizedCh ? decomposeHangul(recognizedCh) : null;
+  if (!td || !rd) return 'diff';
+  if (td.cho !== rd.cho || td.jung !== rd.jung) return 'diff';
+  return td.jong === rd.jong ? 'exact' : 'jongDiff';
+}
+
+// 단어 전체(여러 음절)를 앞에서부터 한 글자씩 compareSyllable로 비교해서,
+// 완전히 같은 음절 수(exactCount) / 받침만 다른 음절 수(jongDiffCount) / 아예 다른 음절 수(diffCount)를 센다.
+function classifyMismatch(target, recognized) {
+  const len = Math.max(target.length, recognized.length);
+  let exactCount = 0, jongDiffCount = 0, diffCount = 0;
+  for (let i = 0; i < len; i++) {
+    const kind = compareSyllable(target[i], recognized[i]);
+    if (kind === 'exact') exactCount++;
+    else if (kind === 'jongDiff') jongDiffCount++;
+    else diffCount++;
+  }
+  return { len, exactCount, jongDiffCount, diffCount };
+}
+
+// ===== 오류 유형 진단 (2026-09-02 추가) =====
+// 오답 문항 하나를 놓고, "정확히 무엇이 문제였는지"를 llm-wiki 07/08번 문서(발음지도 참고자료,
+// 찬찬한글 참고자료)에서 쓰는 용어(받침 탈락/첨가/교체, 초성·중성 오류 등)로 이름 붙인다.
+// 세션 상세 화면과 검사지 리포트의 지도 방안 둘 다 이 함수 하나를 공통으로 써서, 화면마다
+// 다른 기준으로 오류를 나누는 일이 없게 한다. 한 문항에 여러 유형이 겹칠 수도 있어서
+// (예: 초성·중성이 둘 다 다른 경우) 배열로 반환한다.
+function analyzeError(it) {
+  if (it.feedback === '모르겠다고 답함') return ['읽지 못함'];
+  // recognizedText가 아예 없는 필드면(문자열이 아니면) 이 항목을 저장할 당시 아직
+  // 인식된 소리를 기록하지 않던 예전 버전이라 그런 것이라, 유형을 알아낼 방법이 없다.
+  if (typeof it.recognizedText !== 'string') return ['(예전 기록)'];
+  if (!it.recognizedText) return ['인식 실패'];
+
+  const target = normalizeHangul(it.text);
+  const recognized = normalizeHangul(it.recognizedText);
+  // 인식된 글자가 목표와 완전히 같은데도 오답 처리됐다면(pass=false), 자모 자체는 맞게 냈지만
+  // Azure의 세부 점수(유창성·음량 등)가 낮아서 감점된 경우다 - 아래 자모 비교로는 잡을 수 없다.
+  if (target === recognized) return ['유창성/음량 문제'];
+
+  const tags = new Set();
+  const len = Math.max(target.length, recognized.length);
+  for (let i = 0; i < len; i++) {
+    const td = target[i] ? decomposeHangul(target[i]) : null;
+    const rd = recognized[i] ? decomposeHangul(recognized[i]) : null;
+    if (!td || !rd) { tags.add('음절 수 오류'); continue; }
+    if (td.cho !== rd.cho) tags.add('초성(자음) 오류');
+    if (td.jung !== rd.jung) tags.add('중성(모음) 오류');
+    if (td.jong !== rd.jong) {
+      if (td.jong && !rd.jong) tags.add('받침 탈락');
+      else if (!td.jong && rd.jong) tags.add('받침 첨가');
+      else tags.add('받침 교체');
+    }
+  }
+  return Array.from(tags);
+}
+
+// analyzeError가 돌려주는 태그별로, "무엇이 문제였는지 + 어떻게 지도하면 좋을지"를 한 문장으로
+// 만드는 함수. 지도 방안 문장 전체(STAGE_ADVICE 포함)를 "~연습시켜보세요"로 끝나는 실행 지침
+// 형태로 통일해달라는 요청(2026-09-02)에 맞춰, 설명으로 끝나던 예전 문구를 전부 구체적인
+// 지도 방법 제안으로 바꿨다. items는 그 태그에 해당하는 오답 문항 배열(analyzeError 결과 기준).
+function quoteItems(items) {
+  return items.map((it) => `'${it.text}'`).join(', ');
+}
+const ERROR_TAG_ADVICE = {
+  '받침 탈락': (items) => `${quoteItems(items)}에서 받침을 아예 빼고 발음했어요. 받침 소리를 살짝 과장해서 들려주고, 끝까지 받침을 붙여 말하도록 연습시켜보세요.`,
+  '받침 첨가': (items) => `${quoteItems(items)}에서 없어야 할 받침을 붙여 발음했어요. 받침 없는 글자와 있는 글자를 나란히 들려주며 차이를 비교하는 연습시켜보세요.`,
+  '받침 교체': (items) => `${quoteItems(items)}에서 받침을 다른 소리로 바꿔 발음했어요. 같은 자리에서 받침만 다른 낱말끼리(예: 강/감/간) 나란히 들려주며 구분하는 연습시켜보세요.`,
+  '초성(자음) 오류': (items) => `${quoteItems(items)}에서 초성(첫 자음) 자체를 다른 소리로 냈어요. 조음 위치가 비슷한 자음끼리(예: ㅁ↔ㅂ, ㅇ↔ㄱ) 입 모양 차이를 보여주며 비교 연습시켜보세요.`,
+  '중성(모음) 오류': (items) => `${quoteItems(items)}에서 중성(모음) 자체를 다른 소리로 냈어요. 입 모양과 밝은 소리·어두운 소리 차이를 천지인 원리로 설명하며 비교 연습시켜보세요.`,
+  '음절 수 오류': (items) => `${quoteItems(items)}에서 음절 수 자체가 달라졌어요. 글자를 하나씩 손으로 짚어가며 음절 수만큼 정확히 끊어 읽는 연습시켜보세요.`,
+  '유창성/음량 문제': (items) => `${quoteItems(items)}은(는) 글자는 정확히 발음했지만 목소리 크기·유창성에서 감점됐어요. 조금 더 크고 끊기지 않게 이어 말하는 연습시켜보세요.`,
+  '읽지 못함': (items) => `${quoteItems(items)}은(는) 아예 읽지 못했어요. 글자를 다시 들려주고 따라 말하는 것부터 연습시켜보세요.`,
+  '인식 실패': (items) => `${quoteItems(items)}은(는) 녹음에서 소리 자체가 인식되지 않았어요. 마이크에 더 가까이, 더 또렷하게 말하도록 연습시켜보세요.`,
+  '(예전 기록)': (items) => `${quoteItems(items)}은(는) 예전 기록이라 정확한 오류 유형을 알 수 없어요. 다시 검사해서 확인해보세요.`,
+};
+
 // 90점 미만(진짜 문제일 가능성이 높은 구간)일 때, Azure 응답의 세부 정보로 이유를 설명
 function explainLowScore(best, pronData) {
   if (typeof pronData.SNR === 'number' && pronData.SNR < 20) {
@@ -876,6 +1743,8 @@ function explainLowScore(best, pronData) {
   return '받침이나 소리의 일부가 정확하지 않았어요. 또박또박 다시 말해보세요.';
 }
 
+// ===== 채점 메인 로직 =====
+// 녹음이 끝나면(stopRecording) 이 함수가 실제 점수와 피드백을 계산해 state.lastResult에 담는다.
 async function assessRecording(blob, targetText) {
   try {
     const tokenRes = await fetch('/api/get-token');
@@ -890,15 +1759,23 @@ async function assessRecording(blob, targetText) {
     console.log('순수 인식 응답:', plainData);
     console.log('발음 평가 응답:', pronData);
 
-    const plainBest = plainData.NBest && plainData.NBest[0];
-    const recognizedRaw = plainData.DisplayText || (plainBest && (plainBest.Display || plainBest.Lexical)) || '';
-    const recognizedText = normalizeHangul(recognizedRaw);
+    const target = normalizeHangul(targetText);
+    // 1순위 인식 결과만 보지 않고, Azure가 함께 돌려주는 대체 후보(NBest) 여러 개 중에
+    // 목표 글자와 정확히 같은 게 있으면 그걸 정답으로 인정한다. "라"처럼 짧은 한 음절은
+    // 발음이 조금만 애매해도 Azure가 1순위 후보를 비슷한 다른 소리로 잘못 고르는 경우가 있는데,
+    // 그럴 때도 2~3순위 후보에는 정답이 들어있는 경우가 많다. (Azure에 추가로 더 요청을 보내는 게
+    // 아니라, 이미 한 번에 받은 응답 안의 후보들을 더 꼼꼼히 살펴보는 것만으로 개선하는 방식이다 -
+    // 같은 오디오를 여러 번 다시 보내는 건 Azure가 매번 같은 답을 주기 때문에 효과가 없다)
+    const plainCandidates = [
+      plainData.DisplayText,
+      ...(plainData.NBest || []).flatMap((n) => [n.Display, n.Lexical]),
+    ].filter(Boolean).map(normalizeHangul).filter(Boolean);
+    const recognizedText = plainCandidates.find((c) => c === target) || plainCandidates[0] || '';
 
     if (pronData.RecognitionStatus !== 'Success' || !pronData.NBest || !pronData.NBest.length) {
       state.lastResult = { error: '소리를 인식하지 못했어요. 다시 시도해주세요.' };
     } else {
       const best = pronData.NBest[0];
-      const target = normalizeHangul(targetText);
       const azureAccuracy = Math.round(best.AccuracyScore);
 
       let accuracy;
@@ -916,15 +1793,23 @@ async function assessRecording(blob, targetText) {
           reason = explainLowScore(best, pronData);
         }
       } else {
-        const similarity = jamoSimilarity(target, recognizedText);
-        if (similarity >= 0.5) {
-          // 비슷하지만 틀림 (예: 받침만 다름 - 막/망)
-          accuracy = Math.min(Math.round(similarity * 100), 69);
-          feedback = '발음이 틀렸어요';
-        } else {
-          // 아예 다른 자모/음절/단어
-          accuracy = Math.min(Math.round(similarity * 100), 19);
+        // diffCount(초성/중성 자체가 다른 음절 수)가 하나라도 있으면 "완전히 다른 소리" 등급,
+        // 없으면(즉 모든 음절이 완전히 같거나 받침만 다르면) "받침만 다름" 등급으로 나눈다.
+        const { len, exactCount, jongDiffCount, diffCount } = classifyMismatch(target, recognizedText);
+        if (diffCount > 0) {
+          // 완전히 다른 소리: 0~29점 구간. jamoSimilarity로 약간의 차이는 두되(자모가 얼마나
+          // 겹치는지), 이 등급에 들어온 이상 아무리 겹쳐도 30점을 넘지 않게 상한을 둔다.
+          accuracy = Math.min(Math.round(jamoSimilarity(target, recognizedText) * 100), 29);
           feedback = '목표 글자와 다른 소리예요. 다시 발음해보세요';
+        } else {
+          // 받침만 다름: 40~69점 구간. 완전히 맞은 음절(exactCount)에는 만점(1.0), 받침만
+          // 틀린 음절(jongDiffCount)에는 부분 점수(0.3)를 줘서 전체 음절 대비 비율로 계산한다.
+          // - 단어의 모든 음절에서 받침이 틀렸으면 바닥(40점), 긴 단어에서 받침 하나만 틀렸으면
+          //   위쪽(69점에 가깝게)으로 - 다만 받침 문제가 하나라도 있으면 70점(합격) 이상은 절대
+          //   못 넘게 막아둔다. 받침 오류를 놓치지 않는 게 이 앱을 만든 원래 목적이기 때문이다.
+          const raw = Math.round(100 * (exactCount + 0.3 * jongDiffCount) / len);
+          accuracy = Math.max(40, Math.min(raw, 69));
+          feedback = '받침이 정확하지 않아요';
         }
       }
 
@@ -942,6 +1827,8 @@ async function assessRecording(blob, targetText) {
           accuracy,
           pass: state.lastResult.pass,
           feedback: reason || feedback,
+          // 결과 상세 화면에서 "실제로 무엇으로 들렸는지" 보여주기 위해 인식된 소리도 함께 저장한다
+          recognizedText: recognizedText || '',
         };
         saveSessionItems(session);
       }
@@ -953,6 +1840,9 @@ async function assessRecording(blob, targetText) {
   render();
 }
 
+// 결과 화면: 점수, 합격(초록)/불합격(빨강) 색, 이유(reason), 인식된 소리를 보여주고
+// "다시 시도"(같은 문항 재도전) 또는 "다음 문제"/"단계 목록으로"(마지막 문항이면) 버튼을 그린다.
+// result.error가 있으면(인식 자체가 실패한 경우) 점수 없이 오류 메시지와 "다시 시도" 버튼만 보여준다.
 function renderResult(result) {
   const stage = stages[state.stageIdx];
   const item = currentItem();
@@ -977,20 +1867,69 @@ function renderResult(result) {
     <br/>
     <button class="secondary-btn" id="retryBtn">다시 시도</button>
     <button class="big-btn" id="nextBtn">${isLast ? '단계 목록으로' : '다음 문제'}</button>
+    ${result.pass ? '' : `
+    <br/>
+    <button class="secondary-btn success" id="overrideBtn">잘 발음했어요 (선생님 확인)</button>
+    `}
   `;
   document.getElementById('retryBtn').onclick = () => { state.screen = 'practice'; render(); };
-  document.getElementById('nextBtn').onclick = () => {
-    if (isLast) {
-      state.screen = 'stageList';
-    } else {
-      state.itemIdx += 1;
-      state.screen = 'practice';
-    }
-    render();
-  };
+  document.getElementById('nextBtn').onclick = () => goToNextItem(isLast);
+  // 오답 처리됐지만 선생님이 옆에서 듣기에 실제로는 맞게 발음한 경우를 위한 예외 처리 버튼.
+  // 한 음절만 따로 말하면 Azure도 가끔 비슷한 다른 소리로 잘못 알아듣기 때문에(예: "라"->"락"),
+  // 자동 채점을 100% 믿을 수 없는 순간을 선생님이 직접 바로잡을 수 있게 한다.
+  // 누르면 이 문항을 정답(100점)으로 다시 기록하고, "다음 문제"를 누른 것처럼 바로 다음으로 넘어간다.
+  if (!result.pass) {
+    document.getElementById('overrideBtn').onclick = () => {
+      if (state.currentSessionIdx !== null) {
+        const session = state.sessions[state.currentSessionIdx];
+        session.items[state.itemIdx] = {
+          text: item.text,
+          accuracy: 100,
+          pass: true,
+          feedback: '선생님이 정확한 발음으로 확인함',
+        };
+        saveSessionItems(session);
+      }
+      goToNextItem(isLast);
+    };
+  }
 }
 
-render();
+// "다음 문제" 버튼과 "잘 발음했어요" 버튼이 공통으로 쓰는 화면 전환 로직.
+// 마지막 문항이었으면 단계 목록으로, 아니면 문항 번호를 하나 올리고 문제 풀이 화면으로 돌아간다.
+function goToNextItem(isLast) {
+  if (isLast) {
+    state.screen = 'stageList';
+  } else {
+    state.itemIdx += 1;
+    state.screen = 'practice';
+  }
+  render();
+}
+
+// 페이지가 로드될 때 이미 로그인된 세션이 있는지 먼저 확인한다.
+// 두 가지 경우에 세션이 이미 있을 수 있다: ① 구글 로그인 화면에서 방금 돌아온 직후
+// (Supabase가 URL에 담겨온 토큰을 읽어 자동으로 세션을 만들어둔 상태), ② 예전에 로그인한 채로
+// 브라우저를 닫았다가 다시 열어서 (Supabase가 로그인 상태를 브라우저에 저장해두기 때문).
+// 두 경우 모두 로그인 화면을 다시 보여주지 않고 바로 반 목록 화면으로 들어가게 해준다.
+// getSession() 자체가 실패할 수도 있다(예: 저장된 로그인 정보가 일부만 남아있거나, 확인하는
+// 도중 네트워크가 잠깐 끊기는 경우). try/catch 없이 두면 이 함수가 예외를 던지고 끝나버려서
+// render()가 한 번도 호출되지 않고, 화면이 완전히 빈 채로 멈춰버린다 - 그럴 땐 그냥 로그인
+// 화면부터 보여주는 게 안전하다 (사용자가 다시 로그인하면 되므로).
+(async () => {
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) {
+      const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name
+        || session.user.email;
+      await enterAsTeacher(name, session.user.id);
+      return;
+    }
+  } catch (e) {
+    console.error('자동 로그인 확인 실패:', e);
+  }
+  render();
+})();
 </script>
 </body>
 </html>
