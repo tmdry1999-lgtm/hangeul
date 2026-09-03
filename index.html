@@ -74,7 +74,12 @@
     font-weight: 700;
     color: var(--text);
     margin: 24px 0;
+    word-break: keep-all;
   }
+  /* 문장(7단계)/짧은 문단(8단계)처럼 글자 수가 많은 문항은 64px 그대로 쓰면 좁은 카드(480px) 밖으로
+     넘치므로, 길이에 따라 글자 크기를 단계적으로 줄인다 (renderPractice가 붙여준다). */
+  .target-text.long { font-size: 30px; }
+  .target-text.paragraph { font-size: 22px; line-height: 1.6; text-align: left; }
   .big-btn {
     font-size: 15px;
     font-weight: 600;
@@ -249,10 +254,16 @@
 
 <script>
 // ===== 문항 데이터 =====
-// 학습 단계(모음 → 자음 → 받침없는 단어 → 이중모음 → 이중모음 단어 → 대표받침) 순서로 정의한다
-// (순서와 이유는 llm-wiki/09-앱-설계-개요.md 참고). 각 단계는 이름(name)과 문항 목록(items)을 갖고,
-// items의 각 항목은 { text: '화면에 보여줄 글자' } 형태다. 실제 검사에서는 이 목록 전체를 다 쓰지 않고
-// shuffle()로 섞은 뒤 일부만 뽑아서 쓴다 (renderStageList 참고).
+// 학습 단계(모음 → 자음 → 받침없는 단어 → 이중모음 → 이중모음 단어 → 대표받침 → 문장 → 짧은 문단)
+// 순서로 정의한다 (순서와 이유는 llm-wiki/09-앱-설계-개요.md 참고). 각 단계는 이름(name)과 문항
+// 목록(items)을 갖고, items의 각 항목은 { text: '화면에 보여줄 글자' } 형태다. 실제 검사에서는
+// 이 목록 전체를 다 쓰지 않고 shuffle()로 섞은 뒤 일부만 뽑아서 쓴다 (renderStageList 참고).
+// compositeScoring: true가 붙은 단계(7, 8단계)는 채점 방식이 다르다 - 1~6단계는 목표 글자와
+// 정확히 일치해야만 Azure 세부 점수를 신뢰하고, 안 맞으면 초성/중성/받침을 직접 비교해서 채점하는데
+// (assessRecording 참고), 문장·문단은 자연스러운 억양·연음(예: "손이"가 "소니"로 들리는 것)이
+// 정상이라 이 엄격한 방식을 그대로 쓰면 오히려 정상 발화를 오답으로 채점하게 된다. 그래서 이
+// 두 단계는 Azure가 문장 단위 발화에 맞춰 계산해주는 종합 발음 점수(PronScore)를 그대로 신뢰하는
+// 방식으로 시작한다(2026-09-03, 사용자 확정 - 나중에 필요하면 더 정교하게 다듬을 수 있음).
 const stages = [
   { name: '1. 모음', items: [
       '아', '어', '오', '우', '으', '이', '야', '여', '요', '유',
@@ -272,6 +283,27 @@ const stages = [
     ].map((text) => ({ text })) },
   { name: '6. 대표받침', items: [
       '막', '국', '눈', '손', '곧', '물', '달', '김', '몸', '밥', '집', '강', '공',
+    ].map((text) => ({ text })) },
+  { name: '7. 문장', compositeScoring: true, items: [
+      '나비가 날아가요', '아기가 잠을 자요', '고양이가 우유를 마셔요', '오리가 강가에서 놀아요',
+      '친구와 공을 차요', '우리는 학교에 가요', '강아지가 밥을 먹어요', '하늘이 아주 맑아요',
+      // 2026-09-03 추가 (사용자 요청으로 세션 문항 수를 5개→10개로 늘리면서, 기존 8개로는
+      // 부족해서 같은 난이도로 2개 더 채워 넣음)
+      '토끼가 풀밭에서 뛰어놀아요', '새들이 나무 위에서 노래해요',
+    ].map((text) => ({ text })) },
+  { name: '8. 짧은 문단', compositeScoring: true, items: [
+      '나비가 꽃밭에서 날아다녀요. 나비는 알록달록 예뻐요.',
+      '아침에 일어나서 세수를 해요. 그리고 밥을 먹어요.',
+      '오늘은 날씨가 맑아요. 친구들과 밖에서 놀았어요.',
+      '강아지와 산책을 해요. 강아지는 신나서 뛰어다녀요.',
+      '저녁에 가족과 함께 밥을 먹어요. 정말 행복한 시간이에요.',
+      // 2026-09-03 추가 (세션 문항 수를 5개→10개로 늘리면서, 기존 5개로는 부족해서 같은
+      // 난이도로 5개 더 채워 넣음)
+      '학교에서 친구를 만나요. 함께 재미있게 놀아요.',
+      '엄마가 맛있는 빵을 구워요. 온 집안에 냄새가 좋아요.',
+      '비가 오는 날엔 우산을 써요. 빗소리가 참 좋아요.',
+      '동생과 함께 그림을 그려요. 알록달록 예쁜 그림이 완성돼요.',
+      '할머니 댁에 놀러 가요. 할머니가 반갑게 맞아주세요.',
     ].map((text) => ({ text })) },
 ];
 
@@ -311,11 +343,23 @@ function escapeHtml(text) {
 //   - teacher / teacherId: 로그인한 선생님 이름과 Supabase Auth가 발급한 그 계정의 고유 id
 //   - classes: 로그인한 선생님이 만든 반 목록. 각 반 객체 안에 그 반 학생들(students) 배열이 들어있다.
 //   - currentClassId / currentStudentId: 지금 화면에서 선택된 반 / 학생의 id
+//   - editingRecognized: 결과 화면에서 "인식된 소리와 다름 (선생님 확인)" 버튼을 눌러 직접 타자로
+//     고치는 입력창을 지금 펼쳐놓은 상태인지. goToNextItem에서 항상 false로 되돌린다.
+//   - recordingUrls: 세션 상세 화면에서 "다시 듣기"를 위해 방금 녹음한 소리를 잠깐 담아두는 곳.
+//     `세션id_문항번호` 문자열을 key로 쓰고, 실제 오디오는 서버(Supabase)에는 절대 저장하지 않고
+//     이 브라우저 탭이 열려있는 동안만 메모리(URL.createObjectURL)에 둔다 - 그래서 새로고침하거나
+//     다른 컴퓨터로 결과를 보면 재생 버튼이 안 뜨고, 방금 이 자리에서 푼 문항만 다시 들을 수 있다.
+//   - recordingOrder: recordingUrls에 키가 추가된 순서. MAX_RECORDINGS를 넘으면 오래된 것부터
+//     해제(revokeObjectURL)하기 위해 순서를 따로 기록해둔다.
 let state = {
   screen: 'login', stageIdx: 0, itemIdx: 0, sessionItems: [], sessions: [],
   currentSessionIdx: null, viewingSessionIdx: null,
   teacher: null, teacherId: null, classes: [], currentClassId: null, currentStudentId: null,
+  recordingUrls: {}, recordingOrder: [], editingRecognized: false,
 };
+// recordingUrls에 담아두는 녹음 URL 최대 개수. 한 탭에서 검사를 계속 이어가면 URL이 끝없이
+// 쌓여 메모리를 차지하므로(assessRecording 참고), 이 개수를 넘으면 오래된 것부터 해제한다.
+const MAX_RECORDINGS = 200;
 // 화면 내용을 갈아끼울 대상이 되는 카드 div (HTML의 <div class="card" id="app"></div>)
 const app = document.getElementById('app');
 // 표(table)가 들어가는 화면은 좁은 카드보다 넓은 레이아웃(.card.wide)이 필요해서 따로 표시해둔다
@@ -715,7 +759,7 @@ function handleExcelUpload(e, cls) {
 }
 
 // 학습 단계 목록 화면: 학생을 고르고 들어온 경우 그 학생 이름을 상단에 보여주고,
-// stages 배열에 정의된 6개 단계를 버튼으로 나열한다. 단계 버튼을 누르면 그 단계 문항 중
+// stages 배열에 정의된 단계를 전부 버튼으로 나열한다. 단계 버튼을 누르면 그 단계 문항 중
 // 무작위로 최대 5개를 뽑아 새 검사 세션을 시작한다 (아래 stage-btn 클릭 핸들러 참고).
 function renderStageList() {
   const cls = currentClass();
@@ -730,14 +774,17 @@ function renderStageList() {
   if (student) {
     document.getElementById('toStudentsBtn').onclick = () => { state.screen = 'studentList'; render(); };
   }
-  // 단계 버튼 클릭: 그 단계의 전체 문항(pool)을 섞은 뒤 앞에서 5개(또는 전체 문항 수가 5개보다
+  // 단계 버튼 클릭: 그 단계의 전체 문항(pool)을 섞은 뒤 앞에서 10개(또는 전체 문항 수가 10개보다
   // 적으면 그만큼)만 뽑아 이번 검사에서 쓸 문항으로 정하고, Supabase에 새 세션 행을 만든다.
+  // (2026-09-03, 사용자 요청으로 5개→10개로 늘림 - 7·8단계 문항 은행도 10개 이상으로 같이 늘려서
+  // 모든 단계가 동일하게 10문항씩 나오도록 맞춤. isSessionPassed의 "정답 비율 70%" 판정도
+  // 문항 수에 의존하지 않고 그때그때 푼 문항 수(done.length) 기준으로 계산해서 그대로 잘 맞는다.)
   app.querySelectorAll('.stage-btn').forEach(btn => {
     btn.onclick = async () => {
       state.stageIdx = Number(btn.dataset.idx);
       state.itemIdx = 0;
       const pool = stages[state.stageIdx].items;
-      state.sessionItems = shuffle(pool).slice(0, Math.min(5, pool.length));
+      state.sessionItems = shuffle(pool).slice(0, Math.min(10, pool.length));
       const stageName = stages[state.stageIdx].name;
       const total = state.sessionItems.length;
       const { data, error } = await sb
@@ -760,6 +807,19 @@ function sessionAverage(session) {
   const done = session.items.filter(Boolean);
   if (!done.length) return null;
   return Math.round(done.reduce((sum, it) => sum + it.accuracy, 0) / done.length);
+}
+
+// 세션 하나가 "도달"인지 판정한다. 예전엔 평균 점수만 70점 이상이면 도달로 봤는데, 그러면
+// 5문항 중 1문항만 맞고 나머지 4개가 60점대에 몰려 있어도 평균이 70을 넘어 "도달"로 잘못
+// 표시되는 문제가 있었다(2026-09-03, 사용자가 문장 단계 5문항 중 1문항만 맞았는데 평균
+// 73점으로 도달 처리된 걸 발견함). 그래서 평균뿐 아니라 "실제로 맞은 문항의 비율"도 70%
+// 이상이어야 도달로 인정한다 - 둘 중 하나라도 못 미치면 보완 필요로 본다.
+function isSessionPassed(session) {
+  const done = session.items.filter(Boolean);
+  if (!done.length) return false;
+  const avg = sessionAverage(session);
+  const passRatio = done.filter((it) => it.pass).length / done.length;
+  return avg !== null && avg >= 70 && passRatio >= 0.7;
 }
 
 // 결과 확인 화면 (2026-09-02 재설계): 시도한 시간 순서가 아니라, 커리큘럼 단계(1.모음~6.대표받침)
@@ -792,7 +852,7 @@ function renderHistory() {
     // sessions는 시도한 순서대로 뒤에 쌓이므로, 배열의 마지막 항목이 가장 최근 시도다
     const latest = g.attempts[g.attempts.length - 1];
     const avg = sessionAverage(latest.session);
-    const passed = avg !== null && avg >= 70;
+    const passed = isSessionPassed(latest.session);
     return `
       <div class="result-row" data-group-idx="${groups.indexOf(g)}">
         <div class="result-row-main">
@@ -872,22 +932,13 @@ function renderStageAttempts() {
   });
 }
 
-// 세션 상세 화면: 그 세션에서 푼 문항마다 점수를 보여주고, 정답(pass=true)이 아닌 문항에만
-// 왜 감점됐는지 이유(it.feedback)를 함께 보여준다 (맞은 문항까지 이유를 보여주면 번잡하기 때문).
-// "결과 목록으로" 버튼은 여기 들어오기 전 화면(history 또는 stageAttempts)으로 되돌아간다.
-// analyzeError 태그만으로 이미 다 설명되는, 정보값 없는 뻔한 문구들. 이 문구들은 오류 태그
-// 배지 아래에 다시 보여주지 않는다 (2026-09-02, "같은 말이 반복돼서 가독성이 안 좋다"는 피드백 반영).
-// 태그만으로는 알 수 없는 진짜 세부 이유(예: SNR·유창성 관련 설명)일 때만 아래에 추가로 보여준다.
-const GENERIC_FEEDBACK_TEXTS = new Set([
-  '받침이 정확하지 않아요',
-  '목표 글자와 다른 소리예요. 다시 발음해보세요',
-  '모르겠다고 답함',
-]);
-
+// 세션 상세 화면: 그 세션에서 푼 문항마다 점수를 보여주고, 정답(pass=true)이 아닌 문항에는
+// 오류 태그(analyzeError)를 함께 보여준다. "결과 목록으로" 버튼은 여기 들어오기 전 화면
+// (history 또는 stageAttempts)으로 되돌아간다.
 function renderSessionDetail() {
   const session = state.sessions[state.viewingSessionIdx];
   const avg = sessionAverage(session);
-  const rows = session.items.map((it) => {
+  const rows = session.items.map((it, idx) => {
     if (!it) return '';
     // recognizedText가 undefined인 데는 두 가지 이유가 있다: ① "모르겠어요"/"잘 발음했어요
     // (선생님 확인)"처럼 애초에 녹음·인식을 거치지 않고 만들어진 항목이라 그런 경우, ② 이 항목을
@@ -897,17 +948,29 @@ function renderSessionDetail() {
       : it.feedback === '선생님이 정확한 발음으로 확인함' ? '(선생님 확인)'
       : typeof it.recognizedText === 'string' ? (it.recognizedText ? `"${escapeHtml(it.recognizedText)}"` : '(인식 안 됨)')
       : '(예전 기록)';
-    // 오류 내용 칸: 07/08번 문서 용어로 분류한 태그(예: 받침 탈락, 초성 오류)를 보여주고,
-    // 태그만으로 설명이 안 되는 경우에만(예: 유창성 문제의 구체적 사유) 문구를 추가로 보여준다.
+    // 방금 이 세션에서 녹음한 소리가 메모리에 남아있을 때만(state.recordingUrls 참고) 재생 버튼을 보여준다.
+    // 새로고침했거나 다른 컴퓨터에서 보는 기록은 오디오 자체가 없으므로 버튼이 뜨지 않는다.
+    const playBtn = state.recordingUrls[session.id + '_' + idx]
+      ? `<div><button class="secondary-btn" style="padding:2px 8px; font-size:12px; margin-top:3px;" data-play-idx="${idx}">▶ 재생</button></div>`
+      : '';
+    // 오류 내용 칸: 07/08번 문서 용어로 분류한 태그(예: 받침 탈락, 초성 오류)만 보여준다.
+    // 예전엔 태그만으로 설명이 안 되는 경우(예: 유창성 문제의 구체적 사유) 그 아래에 문장으로
+    // 된 설명을 추가로 보여줬는데, 표 안에서 문항마다 길이가 들쭉날쭉해 오히려 산만하다는
+    // 피드백(2026-09-03) → 그 설명 문장은 빼고 태그(및 문장/문단의 단어별 오류)만 남김.
+    // 문장/문단 문항은 태그 하나로는 "어떤 단어가" 문제였는지 알 수 없으므로, wordIssues가
+    // 있으면 그 아래에 단어별로 나열해서 보여준다 (2026-09-03, 단어별 오류 진단 추가).
+    const wordIssueLine = (it.wordIssues && it.wordIssues.length)
+      ? `<div style="margin-top:3px; font-size:12px; color:var(--text-muted);">${it.wordIssues.map((w) => `'${escapeHtml(w.word)}'(${WORD_ERROR_LABEL[w.errorType] || w.errorType})`).join(', ')}</div>`
+      : '';
     const errorCell = it.pass ? '' : `
       ${analyzeError(it).map((tag) => `<span class="error-tag">${tag}</span>`).join('')}
-      ${GENERIC_FEEDBACK_TEXTS.has(it.feedback) ? '' : `<div style="margin-top:3px;">${it.feedback}</div>`}
+      ${wordIssueLine}
     `;
     return `
       <tr>
         <td>${it.text}</td>
-        <td style="color:${it.pass ? '#27ae60' : '#e74c3c'}; font-weight:bold;">${it.accuracy}점</td>
-        <td>${recognizedCell}</td>
+        <td style="color:${it.pass ? '#16a34a' : '#dc2626'}; font-weight:bold;">${it.accuracy}점</td>
+        <td>${recognizedCell}${playBtn}</td>
         <td>${errorCell}</td>
       </tr>
     `;
@@ -934,6 +997,9 @@ function renderSessionDetail() {
   `;
   document.getElementById('backBtn').onclick = () => { state.screen = state.sessionDetailBack || 'history'; render(); };
   document.getElementById('toStudentListBtn').onclick = () => { state.screen = 'studentList'; render(); };
+  app.querySelectorAll('[data-play-idx]').forEach((btn) => {
+    btn.onclick = () => new Audio(state.recordingUrls[session.id + '_' + btn.dataset.playIdx]).play();
+  });
 }
 
 // ===== 인쇄용 검사지 리포트 (2026-09-02 추가) =====
@@ -942,15 +1008,6 @@ function renderSessionDetail() {
 // "인쇄" 버튼을 누르면 브라우저 자체 인쇄 기능(window.print)으로 종이 출력 또는 PDF 저장이 된다
 // (별도 PDF 라이브러리 없이 CSS의 @media print 규칙만으로 인쇄용 레이아웃을 만든다).
 
-// 전체 평균 점수를 보고 "해득 수준" 문구를 정하는 기준. 등급 경계는 임의로 정한 값이라
-// 실제 사용해보면서 필요하면 조정하면 된다.
-function achievementLevel(avg) {
-  if (avg === null) return '검사 전';
-  if (avg >= 90) return '매우 잘함';
-  if (avg >= 70) return '잘함';
-  if (avg >= 50) return '보통';
-  return '미흡';
-}
 
 // "3. 항목별 세부 결과" 표의 "인식된 소리" 칸에 쓸 문구.
 // recognizedText가 목표 글자와 똑같은 경우(예: '따'를 '따'로 정확히 인식)는 발음 자체가
@@ -993,6 +1050,8 @@ const STAGE_ADVICE = {
   '4. 이중모음': '복잡한 모음(이중모음)은 기본 모음보다 어려운 단계예요(찬찬한글 4단원). 입 모양이 바뀌는 이중모음(예: ㅘ, ㅝ)을 천천히 끊어서 발음한 뒤 이어 붙여 읽는 연습시켜보세요.',
   '5. 이중모음 단어': '이중모음이 들어간 단어 읽기에서 어려움을 보였어요(찬찬한글 5단원). 4단원(이중모음 낱자)을 먼저 확실히 다진 뒤, 짧은 단어부터 다시 연습시켜보세요.',
   '6. 대표받침': '대표받침(ㄱㄴㄷㄹㅁㅂㅇ) 7개를 소리와 표기가 일치하는 낱말부터 하나씩 확인해요(찬찬한글 6~7단원). 받침 소리를 살짝 과장해서 들려주며 연습시켜보세요.',
+  '7. 문장': '이제부터는 한 글자가 아니라 문장 전체를 자연스럽게 읽는 유창성이 중요해요. 짧게 끊어서 정확히 읽는 연습을 먼저 시키고, 익숙해지면 문장 전체를 이어서 읽는 연습시켜보세요.',
+  '8. 짧은 문단': '문장 두세 개를 이어 읽으며 흐름을 유지하는 단계예요. 문장 하나씩 먼저 또박또박 읽힌 뒤, 문장 사이를 자연스럽게 이어 읽는 연습시켜보세요.',
 };
 
 // 한 자리 숫자 정도의 하위 항목에 쓸 한글 순서 표시(가,나,다...). list-style-type의 한글 지원은
@@ -1044,7 +1103,7 @@ function renderReport() {
       passedCount,
       total: latest.total || doneItems.length,
       avg,
-      passed: avg !== null && avg >= 70,
+      passed: isSessionPassed(latest),
       wrongItems,
       createdAt: latest.createdAt,
     };
@@ -1058,6 +1117,13 @@ function renderReport() {
     ? triedRows.reduce((latest, r) => (!latest || r.createdAt > latest ? r.createdAt : latest), null)
     : null;
   const failedStages = triedRows.filter((r) => !r.passed).map((r) => r.stageName);
+  // "2. 종합 결과"의 "수준" 칸은 예전엔 이 리포트 전용으로 따로 계산한 4단계(매우잘함/잘함/
+  // 보통/미흡)를 썼는데, 학생 목록·학급통계에서 이미 쓰는 해득/보충/미해득/미검사(achievementTier)
+  // 와 계산 기준이 서로 달라서 같은 학생을 두고 리포트 안에서 "수준: 보통"과 다른 화면의
+  // "해득수준: 보충"처럼 미묘하게 다른 말이 동시에 뜰 수 있었다(2026-09-03, 종합 검토에서 발견).
+  // 화면마다 다른 용어를 쓸 이유가 없어서, 리포트도 학생 목록과 완전히 같은 판정(achievementTier)과
+  // 같은 배지(levelBadgeHtml)를 그대로 쓰도록 통일함.
+  const tier = achievementTier(computeStudentStats(student));
 
   const comment = !triedRows.length
     ? '아직 검사를 시작하지 않았어요.'
@@ -1118,7 +1184,7 @@ function renderReport() {
         <tr>
           <td>${lastDate ? new Date(lastDate).toLocaleDateString('ko-KR') : '-'}</td>
           <td>${overallAvg === null ? '-' : overallAvg + '점'}</td>
-          <td>${achievementLevel(overallAvg)}</td>
+          <td>${levelBadgeHtml(tier)}</td>
         </tr>
       </tbody>
     </table>
@@ -1165,12 +1231,29 @@ function computeStudentStats(s) {
     if (!attempts.length) return null;
     return sessionAverage(attempts[attempts.length - 1]);
   });
+  // 그 단계를 "도달"로 인정할지 - 결과 확인/리포트 화면과 똑같이 isSessionPassed 기준(평균
+  // 70점 이상 + 실제 정답 비율 70% 이상)을 그대로 따른다. achievementTier(해득/보충/미해득
+  // 판정)가 예전엔 이 기준 없이 stageAvgs의 평균만 보고 있어서, 문장 단계처럼 5문항 중 1개만
+  // 맞아도 평균이 70을 넘으면 그 단계를 통과한 것으로 잘못 계산하는 문제가 있었다(2026-09-03,
+  // "도달" 배지·리포트 "수준"에서 먼저 발견해 고친 것과 같은 종류의 버그 - 앱에서 가장 중요한
+  // 지표인 해득/보충/미해득 판정에도 같은 기준을 적용해 통일함).
+  const stagePassed = stages.map((stage) => {
+    const attempts = (s.sessions || []).filter((sess) => sess.stageName === stage.name && sess.items.some(Boolean));
+    if (!attempts.length) return null;
+    return isSessionPassed(attempts[attempts.length - 1]);
+  });
   const lastCreatedAt = (s.sessions || []).reduce((latest, sess) => {
     if (!sess.items.some(Boolean)) return latest;
     return !latest || sess.createdAt > latest ? sess.createdAt : latest;
   }, null);
-  return { student: s, stageAvgs, lastCreatedAt, tried: allScores.length > 0 };
+  return { student: s, stageAvgs, stagePassed, lastCreatedAt, tried: allScores.length > 0 };
 }
+
+// "한글 해득"은 자모~대표받침(1~6단계, 기초 문식성)을 기준으로 판정한다. 7·8단계(문장/짧은 문단)는
+// 그 이후의 읽기 유창성 단계라서, 나중에 이 배열에 단계를 더 추가하더라도(예: 받침가족·겹받침)
+// "해득" 판정 기준이 저절로 늘어나 학생들이 갑자기 전부 미해득으로 떨어지는 일이 없도록 숫자를
+// stages 배열 길이가 아니라 이 상수로 고정해서 관리한다.
+const CORE_LITERACY_STAGE_COUNT = 6;
 
 // 해득수준 4분류 (2026-09-02, 위키 07/08 참고자료를 근거로 구체화):
 // 예전에는 "지금까지 푼 모든 문항의 평균 점수"만 보고 70/50점 경계로 나눴는데, 이러면 1단계
@@ -1186,9 +1269,13 @@ function computeStudentStats(s) {
 // - 미검사: 세션 기록이 하나도 없음
 function achievementTier(x) {
   if (!x.tried) return '미검사';
-  const allStagesPassed = x.stageAvgs.every((avg) => avg !== null && avg >= 70);
-  // stageAvgs[0]=모음, stageAvgs[1]=자음 (stages 배열의 앞 두 단계)
-  const foundationFailed = x.stageAvgs.slice(0, 2).some((avg) => avg !== null && avg < 70);
+  // isSessionPassed와 같은 기준(평균 70점 이상 + 정답 비율 70% 이상)으로 이미 계산해 둔
+  // stagePassed를 쓴다 (computeStudentStats 참고) - 그냥 평균만 보던 예전 방식은 5문항 중
+  // 1개만 맞아도 평균이 70을 넘으면 통과로 잘못 셌다.
+  const coreStagePassed = x.stagePassed.slice(0, CORE_LITERACY_STAGE_COUNT);
+  const allStagesPassed = coreStagePassed.every((p) => p === true);
+  // coreStagePassed[0]=모음, coreStagePassed[1]=자음 (stages 배열의 앞 두 단계)
+  const foundationFailed = coreStagePassed.slice(0, 2).some((p) => p === false);
   if (allStagesPassed) return '해득';
   if (foundationFailed) return '미해득';
   return '보충';
@@ -1222,7 +1309,7 @@ function computeClassStats(cls) {
   const levelCounts = { 해득: 0, 보충: 0, 미해득: 0, 미검사: 0 };
   studentStats.forEach((x) => { levelCounts[achievementTier(x)]++; });
 
-  // filterFn을 만족하는 학생들만 골라서, 6단계 각각의 학급(집단) 평균을 구한다.
+  // filterFn을 만족하는 학생들만 골라서, 단계마다 학급(집단) 평균을 구한다.
   // (그 단계를 아무도 안 했으면 null - Chart.js가 그 막대만 비워서 그려준다)
   function stageAverages(filterFn) {
     const filtered = studentStats.filter(filterFn);
@@ -1243,9 +1330,11 @@ function computeClassStats(cls) {
       if (!attempts.length) return;
       const latest = attempts[attempts.length - 1];
       latest.items.filter((it) => it && !it.pass).forEach((it) => {
-        // '(예전 기록)'은 진짜 오류 유형이 아니라 recognizedText를 저장하기 전 옛날 데이터라는
-        // 표시일 뿐이라, 학급통계의 "오류 유형별 학생" 목록에는 굳이 보여주지 않는다.
-        analyzeError(it).filter((tag) => tag !== '(예전 기록)').forEach((tag) => tagsForThisStudent.add(tag));
+        // '(예전 기록)'과 '선생님이 직접 채점'은 진짜 교육적 오류 유형이 아니라 데이터 상태를
+        // 알려주는 표시일 뿐이라, 학급통계의 "오류 유형별 학생" 목록에는 굳이 보여주지 않는다.
+        analyzeError(it)
+          .filter((tag) => tag !== '(예전 기록)' && tag !== '선생님이 직접 채점')
+          .forEach((tag) => tagsForThisStudent.add(tag));
       });
     });
     tagsForThisStudent.forEach((tag) => {
@@ -1268,7 +1357,7 @@ function computeClassStats(cls) {
   };
 }
 
-// 6단계 이름을 라벨로, data 배열을 값으로 쓰는 학급 평균 막대그래프 설정을 만든다 (재사용).
+// 각 단계 이름을 라벨로, data 배열을 값으로 쓰는 학급 평균 막대그래프 설정을 만든다 (재사용).
 function classBarChartConfig(data) {
   return {
     type: 'bar',
@@ -1412,9 +1501,11 @@ function renderPractice() {
   const stage = stages[state.stageIdx];
   const item = currentItem();
   const hasPrev = state.itemIdx > 0;
+  // 문장/문단처럼 글자 수가 많은 문항은 기본 64px 글자 크기로 두면 카드 밖으로 넘치므로 줄인다.
+  const textSizeClass = item.text.length > 20 ? 'paragraph' : item.text.length > 8 ? 'long' : '';
   app.innerHTML = `
     <div class="progress">${stage.name} · ${state.itemIdx + 1}/${state.sessionItems.length}</div>
-    <div class="target-text">${item.text}</div>
+    <div class="target-text ${textSizeClass}">${item.text}</div>
     <button class="big-btn" id="playBtn">🔊 듣기</button>
     <br/>
     <button class="mic-btn" id="micBtn">🎤</button>
@@ -1756,10 +1847,32 @@ function classifyMismatch(target, recognized) {
 // (예: 초성·중성이 둘 다 다른 경우) 배열로 반환한다.
 function analyzeError(it) {
   if (it.feedback === '모르겠다고 답함') return ['읽지 못함'];
+  // 선생님이 "점수/인식된 소리 수정" 패널로 점수와 recognizedText를 직접 고친 항목이다
+  // (renderResult 참고, 2026-09-03). 점수를 이미 선생님이 판단해서 넣은 값이라 아래 자모 비교
+  // 로직으로 다시 진단하면 오히려 혼란스러울 수 있어(예: 고친 텍스트는 목표와 같은데 선생님이
+  // 일부러 70점 미만을 넣은 경우) 별도 태그로만 표시한다.
+  if (it.feedback === '선생님이 직접 채점함') return ['선생님이 직접 채점'];
   // recognizedText가 아예 없는 필드면(문자열이 아니면) 이 항목을 저장할 당시 아직
   // 인식된 소리를 기록하지 않던 예전 버전이라 그런 것이라, 유형을 알아낼 방법이 없다.
   if (typeof it.recognizedText !== 'string') return ['(예전 기록)'];
   if (!it.recognizedText) return ['인식 실패'];
+  // 문장/문단 문항(띄어쓰기가 있음)은 Azure 종합 점수만 신뢰하는 방식이라(assessRecording,
+  // compositeScoring 참고), 아래 음절 단위 비교(음절 자리를 하나하나 맞대는 방식)를 그대로 쓰면
+  // 문장 중간에 음절 하나만 밀려도 뒤 음절이 전부 어긋난 것처럼 잘못 진단될 수 있어 쓰지 않는다.
+  // 대신 Azure가 단어 단위로 알려주는 오류 정보(wordIssues, assessRecording 참고)를 우선 쓴다 -
+  // 생략된 단어/불필요하게 추가된 말/발음이 틀린 단어를 구분해서 태그로 만든다. wordIssues가
+  // 없는 예전 기록이거나 Azure가 단어 정보를 못 준 경우에만 예전처럼 뭉뚱그린 태그로 대체한다.
+  if (it.text.includes(' ')) {
+    if (!Array.isArray(it.wordIssues) || !it.wordIssues.length) return ['유창성/발음 문제'];
+    const tags = new Set();
+    it.wordIssues.forEach((w) => {
+      if (w.errorType === 'Omission') tags.add('단어 생략');
+      else if (w.errorType === 'Insertion') tags.add('불필요한 말 추가');
+      else if (w.errorType === 'Mispronunciation') tags.add('단어 발음 오류');
+      else tags.add('유창성/발음 문제'); // Monotone/UnexpectedBreak 등 억양·끊어읽기 관련 오류
+    });
+    return Array.from(tags);
+  }
 
   const target = normalizeHangul(it.text);
   const recognized = normalizeHangul(it.recognizedText);
@@ -1791,6 +1904,14 @@ function analyzeError(it) {
 function quoteItems(items) {
   return items.map((it) => `'${it.text}'`).join(', ');
 }
+// 문장/문단 오답 문항(items)들의 wordIssues 중 특정 errorType(Omission/Insertion/Mispronunciation)에
+// 해당하는 단어만 모아 중복 없이 나열한다. 지도 방안 문구에 "어떤 단어가 문제였는지"까지 구체적으로
+// 보여주기 위함이다.
+function wordListForType(items, errorType) {
+  const words = new Set();
+  items.forEach((it) => (it.wordIssues || []).forEach((w) => { if (w.errorType === errorType) words.add(w.word); }));
+  return Array.from(words).map((w) => `'${w}'`).join(', ');
+}
 const ERROR_TAG_ADVICE = {
   '받침 탈락': (items) => `${quoteItems(items)}에서 받침을 아예 빼고 발음했어요. 받침 소리를 살짝 과장해서 들려주고, 끝까지 받침을 붙여 말하도록 연습시켜보세요.`,
   '받침 첨가': (items) => `${quoteItems(items)}에서 없어야 할 받침을 붙여 발음했어요. 받침 없는 글자와 있는 글자를 나란히 들려주며 차이를 비교하는 연습시켜보세요.`,
@@ -1799,10 +1920,57 @@ const ERROR_TAG_ADVICE = {
   '중성(모음) 오류': (items) => `${quoteItems(items)}에서 중성(모음) 자체를 다른 소리로 냈어요. 입 모양과 밝은 소리·어두운 소리 차이를 천지인 원리로 설명하며 비교 연습시켜보세요.`,
   '음절 수 오류': (items) => `${quoteItems(items)}에서 음절 수 자체가 달라졌어요. 글자를 하나씩 손으로 짚어가며 음절 수만큼 정확히 끊어 읽는 연습시켜보세요.`,
   '유창성/음량 문제': (items) => `${quoteItems(items)}은(는) 글자는 정확히 발음했지만 목소리 크기·유창성에서 감점됐어요. 조금 더 크고 끊기지 않게 이어 말하는 연습시켜보세요.`,
+  '유창성/발음 문제': (items) => `${quoteItems(items)}에서 종합 발음 점수가 낮게 나왔어요. 문장을 천천히 끊어서 또박또박 읽어보게 하고, 잘 안 되는 부분만 따로 짧게 반복 연습시켜보세요.`,
+  '단어 생략': (items) => `${quoteItems(items)}을(를) 읽을 때 일부 단어를 건너뛰고 읽었어요(${wordListForType(items, 'Omission')}). 문장을 손가락으로 짚어가며 단어를 하나도 빠뜨리지 않고 읽는 연습시켜보세요.`,
+  '불필요한 말 추가': (items) => `${quoteItems(items)}을(를) 읽을 때 원래 문장에 없는 말을 더 붙여 읽었어요(${wordListForType(items, 'Insertion')}). 글자를 하나씩 짚어가며 쓰여진 그대로만 읽는 연습시켜보세요.`,
+  '단어 발음 오류': (items) => `${quoteItems(items)}에서 특정 단어의 발음이 부정확했어요(${wordListForType(items, 'Mispronunciation')}). 그 단어만 따로 떼어내 천천히 반복하며 발음을 다듬는 연습시켜보세요.`,
   '읽지 못함': (items) => `${quoteItems(items)}은(는) 아예 읽지 못했어요. 글자를 다시 들려주고 따라 말하는 것부터 연습시켜보세요.`,
   '인식 실패': (items) => `${quoteItems(items)}은(는) 녹음에서 소리 자체가 인식되지 않았어요. 마이크에 더 가까이, 더 또렷하게 말하도록 연습시켜보세요.`,
   '(예전 기록)': (items) => `${quoteItems(items)}은(는) 예전 기록이라 정확한 오류 유형을 알 수 없어요. 다시 검사해서 확인해보세요.`,
+  '선생님이 직접 채점': (items) => `${quoteItems(items)}은(는) 자동 채점 결과가 실제와 달라 선생님이 점수와 인식된 소리를 직접 고쳤어요.`,
 };
+
+// ===== 문장/문단 단어별 오류 진단 (2026-09-03 추가) =====
+// 지금까지 문장/문단(compositeScoring 단계)은 Azure 종합 점수(PronScore)만 믿고, 왜 낮은
+// 점수가 나왔는지는 "유창성/발음 문제"라는 뭉뚱그린 태그 하나로만 보여줬다. 그런데 실제로
+// 점수가 낮게 나온 문항들을 보면 "발음이 나빠서"가 아니라 "문장 중간 단어를 인식 자체가
+// 놓쳐서"인 경우가 섞여 있어 원인 파악이 어려웠다. Azure는 ReferenceText를 넣고
+// EnableMiscue를 켰을 때(buildPronunciationHeader 참고) 문장 안의 단어 하나하나에 대해
+// 생략(Omission)/불필요한 추가(Insertion)/발음오류(Mispronunciation) 여부를 따로 알려주는데,
+// 지금까지 이 정보(NBest[0].Words)를 전혀 안 쓰고 있었다. 이제 이 정보로 "어떤 단어가
+// 문제였는지"까지 구체적으로 보여준다 (사용자가 3가지 안 중 이 방식을 선택함, 2026-09-03).
+//
+// Azure 공식 문서 예시는 단어별 점수가 Words[i].PronunciationAssessment.{AccuracyScore,ErrorType}
+// 처럼 한 번 더 감싸진 형태로 나온다. 그런데 이 프로젝트가 실제로 쓰는 REST API 버전은 문장 전체
+// 점수(NBest[0].AccuracyScore 등)조차 문서 예시와 달리 감싸지 않은 채로 왔던 전례가 있어서(11번
+// 문서 "1차 시도" 참고 - 문서만 믿고 짰다가 실전에서 틀렸던 적이 있음), 단어별 필드도 감싸져
+// 오든 안 오든 둘 다 읽을 수 있게 방어적으로 짠다.
+function wordAssessmentField(word, key) {
+  if (word[key] !== undefined) return word[key];
+  return word.PronunciationAssessment ? word.PronunciationAssessment[key] : undefined;
+}
+
+// analyzeError와 세션 상세 화면(renderSessionDetail)이 함께 쓰는, Azure ErrorType 값을
+// 학부모/교사가 바로 이해할 수 있는 한글 표현으로 바꾸는 사전.
+const WORD_ERROR_LABEL = {
+  Omission: '생략',
+  Insertion: '불필요하게 추가',
+  Mispronunciation: '발음 오류',
+  UnexpectedBreak: '불필요하게 끊어 읽음',
+  MissingBreak: '이어 읽어야 할 곳에서 안 끊음',
+  Monotone: '단조로운 억양',
+};
+
+// 결과 화면에서 선생님이 점수를 직접 고칠 때(2026-09-03 추가) 참고할 수 있도록, 그 단계에서
+// 실제로 쓰는 채점 기준을 짧게 요약한다. compositeScoring 여부(1~6단계 vs 7·8단계)에 따라
+// 로직이 다르므로(assessRecording 참고) 설명도 다르게 보여준다. 여기 적힌 숫자가 실제
+// assessRecording의 계산과 어긋나지 않도록, 코드를 고칠 때 이 문구도 같이 확인할 것.
+function scoringGuidelineText(stage) {
+  if (stage.compositeScoring) {
+    return '채점 기준(문장/문단): 자연스럽게 잘 읽음 = 70점 이상 · 틀린 단어가 있지만 절반 이하 = 40~69점(비율에 비례) · 절반 넘게 틀림 = 0~39점(비율에 비례)';
+  }
+  return '채점 기준(자모/음절/단어): 정확히 발음 = 90~100점 · 받침만 다름(초성·중성은 맞음) = 40~69점 · 초성 또는 중성 자체가 다름(완전히 다른 소리) = 0~29점';
+}
 
 // 90점 미만(진짜 문제일 가능성이 높은 구간)일 때, Azure 응답의 세부 정보로 이유를 설명
 function explainLowScore(best, pronData) {
@@ -1813,7 +1981,10 @@ function explainLowScore(best, pronData) {
     return '말이 자연스럽게 이어지지 않았어요. 더듬거나 끊기지 않게 말해보세요.';
   }
 
-  return '받침이나 소리의 일부가 정확하지 않았어요. 또박또박 다시 말해보세요.';
+  // "조금 더 또박또박 읽어볼까요?"(compositeScoring 헤드라인 문구)와 나란히 보일 때
+  // "또박또박"이 두 번 겹쳐 보인다는 피드백(2026-09-03) → 이 문구에서는 빼고 다시 말해보라는
+  // 뜻만 남김.
+  return '받침이나 소리의 일부가 정확하지 않았어요. 다시 한번 말해보세요.';
 }
 
 // ===== 채점 메인 로직 =====
@@ -1854,7 +2025,61 @@ async function assessRecording(blob, targetText) {
       let accuracy;
       let feedback;
       let reason = '';
-      if (recognizedText && recognizedText === target) {
+      // 문장/문단 문항에서만 채워지는, 단어별 오류 목록 (analyzeError가 사용 - 위 "단어별 오류
+      // 진단" 설명 참고). 그 외 단계(1~6)는 항상 빈 배열로 저장한다.
+      let wordIssues = [];
+      if (stages[state.stageIdx].compositeScoring) {
+        // 문장/문단 단계(7, 8단계): 음절 단위로 정확히 일치하는지 따지는 아래 분기 대신, Azure가
+        // 문장 전체 발화에 맞춰 계산해주는 종합 발음 점수(PronScore, 없으면 AccuracyScore로
+        // 대체)를 기본 점수로 쓴다 (이유는 stages 배열 위 주석 참고). 다만 이 점수만 그대로
+        // 믿으면, 단어 하나를 완전히 다른 소리로 잘못 말해도(예: "강아지가"→"감마쥐가") 70점을
+        // 넘어 합격 처리되고 오류 내용도 안 보이는 문제가 있었다(2026-09-03, 사용자 실사용
+        // 피드백 - "잠을"의 받침을 빼고 "자을"로 읽었는데도 86점 합격으로 오류 표시가 안 보임).
+        // 그래서 아래에서 단어별 오류(wordIssues)가 하나라도 있으면 점수를 합격선 아래로 낮춘다.
+        accuracy = Math.round(typeof best.PronScore === 'number' ? best.PronScore : azureAccuracy);
+        wordIssues = (best.Words || [])
+          .map((w) => ({ word: w.Word, errorType: wordAssessmentField(w, 'ErrorType') || 'None' }))
+          .filter((w) => w.errorType !== 'None');
+        // Azure의 미스큐(EnableMiscue) 정렬이 가끔 목표 문장에 실제로 있는 단어를 'Insertion'
+        // (불필요하게 추가된 말)으로 잘못 표시하는 경우가 있다(2026-09-03, 사용자가 "오리가
+        // 강가에서 놀아요"에서 '놀아요'가 Insertion과 Mispronunciation 두 가지로 중복 표시되는
+        // 걸 발견 - '놀아요'는 실제 목표 문장에 있는 단어라 "불필요하게 추가"일 수 없음). 그
+        // 단어가 목표 문장 안에 실제로 있으면 발음 오류로 다시 분류한다.
+        const targetWords = targetText.split(/\s+/).map((w) => w.replace(/[.,!?]/g, ''));
+        wordIssues = wordIssues.map((w) => (
+          w.errorType === 'Insertion' && targetWords.includes(w.word)
+            ? { word: w.word, errorType: 'Mispronunciation' }
+            : w
+        ));
+        // 같은 단어가 같은 오류 유형으로 여러 번 겹쳐 나오면(Azure 정렬 특성상 발생 가능)
+        // 화면에는 한 번만 보여준다.
+        const seenWordIssues = new Set();
+        wordIssues = wordIssues.filter((w) => {
+          const key = w.word + '_' + w.errorType;
+          if (seenWordIssues.has(key)) return false;
+          seenWordIssues.add(key);
+          return true;
+        });
+        // 예전엔 오류 단어가 있기만 하면 몇 개든 무조건 69점으로 깎았는데, 그러면 8단어 문단에서
+        // 1단어만 틀린 경우와 여러 단어를 틀린 경우가 똑같이 취급돼 정보가 없었다(2026-09-03,
+        // "1~6단계는 틀린 비율에 비례해서 점수를 세분화하는데 문장/문단만 그렇지 않다"는 검토
+        // 지적 반영). 1~6단계의 jongDiff(40~69점)/diff(0~29점) 2단 구조와 같은 형태로, 틀린
+        // 단어 비율이 절반 이하면 40~69점 구간에서, 절반을 넘으면 0~39점 구간에서 비례 계산한다.
+        if (wordIssues.length) {
+          // badRatio는 "오류가 몇 번 잡혔는지"가 아니라 "몇 개의 서로 다른 단어에 문제가
+          // 있었는지"여야 한다. 그런데 한 단어가 서로 다른 오류 유형 두 개를 동시에 받으면
+          // (예: 발음 오류 + 끊어읽기 오류) wordIssues.length가 실제 틀린 단어 수보다 커져서
+          // 비율이 부풀려지는 문제가 있었다(2026-09-03, 코드 리뷰에서 발견) → 고유 단어 수로 계산.
+          const badWordCount = new Set(wordIssues.map((w) => w.word)).size;
+          const badRatio = badWordCount / Math.max(1, targetWords.length);
+          const proportionalCap = badRatio > 0.5
+            ? Math.round(39 * (1 - (badRatio - 0.5) / 0.5))
+            : Math.round(69 - badRatio * 58);
+          accuracy = Math.min(accuracy, proportionalCap);
+        }
+        feedback = accuracy >= 70 ? '아주 잘했어요! 👏' : '조금 더 또박또박 읽어볼까요?';
+        if (accuracy < 70) reason = explainLowScore(best, pronData);
+      } else if (recognizedText && recognizedText === target) {
         // 목표 글자를 정확히 말함 -> Azure의 세부 발음 점수를 신뢰하되,
         // 90점대는 사람 귀로 구별 안 되는 노이즈로 보고 100점 처리 (진짜 문제인 낮은 점수만 이유를 보여줌)
         if (azureAccuracy >= 90) {
@@ -1902,8 +2127,27 @@ async function assessRecording(blob, targetText) {
           feedback: reason || feedback,
           // 결과 상세 화면에서 "실제로 무엇으로 들렸는지" 보여주기 위해 인식된 소리도 함께 저장한다
           recognizedText: recognizedText || '',
+          // 문장/문단 문항의 단어별 오류 목록 (그 외 단계는 항상 빈 배열, analyzeError가 사용)
+          wordIssues,
         };
         saveSessionItems(session);
+        // 방금 녹음한 소리를 세션 상세 화면의 "다시 듣기" 버튼용으로 메모리에 담아둔다
+        // (state.recordingUrls 주석 참고 - 서버에는 저장하지 않음). 같은 문항을 다시 녹음한
+        // 경우 이전 URL을 메모리에서 해제(revokeObjectURL)하고 새 것으로 교체한다.
+        const recordingKey = session.id + '_' + state.itemIdx;
+        if (state.recordingUrls[recordingKey]) {
+          URL.revokeObjectURL(state.recordingUrls[recordingKey]);
+        } else {
+          state.recordingOrder.push(recordingKey);
+        }
+        state.recordingUrls[recordingKey] = URL.createObjectURL(blob);
+        // 한 탭에서 계속 검사를 이어가면 녹음 URL이 끝없이 쌓여 메모리를 차지하므로(2026-09-03,
+        // 코드 리뷰에서 발견), 최근 MAX_RECORDINGS개만 남기고 그보다 오래된 것부터 해제한다.
+        while (state.recordingOrder.length > MAX_RECORDINGS) {
+          const oldestKey = state.recordingOrder.shift();
+          URL.revokeObjectURL(state.recordingUrls[oldestKey]);
+          delete state.recordingUrls[oldestKey];
+        }
       }
     }
   } catch (e) {
@@ -1920,10 +2164,13 @@ function renderResult(result) {
   const stage = stages[state.stageIdx];
   const item = currentItem();
   const isLast = state.itemIdx === state.sessionItems.length - 1;
+  // renderPractice와 같은 기준으로 글자 크기를 줄인다 - 예전엔 결과 화면에는 이 클래스가 안 붙어서
+  // 문장/문단이 64px 기본 크기 그대로 나와 화면을 꽉 채우는 문제가 있었다(2026-09-03 피드백).
+  const textSizeClass = item.text.length > 20 ? 'paragraph' : item.text.length > 8 ? 'long' : '';
 
   if (result.error) {
     app.innerHTML = `
-      <div class="target-text">${item.text}</div>
+      <div class="target-text ${textSizeClass}">${item.text}</div>
       <div class="feedback">${result.error}</div>
       <button class="big-btn" id="retryBtn">다시 시도</button>
     `;
@@ -1932,20 +2179,36 @@ function renderResult(result) {
   }
 
   app.innerHTML = `
-    <div class="target-text">${item.text}</div>
+    <div class="target-text ${textSizeClass}">${item.text}</div>
     <div class="score ${result.pass ? 'pass' : 'fail'}">${result.accuracy}점</div>
     <div class="feedback">${result.feedback}</div>
-    ${result.reason ? `<div style="color:#888; font-size:14px; margin-bottom:8px;">${result.reason}</div>` : ''}
-    <div style="color:#999; font-size:14px;">인식된 소리: ${result.recognizedText || '(없음)'}</div>
+    ${result.reason ? `<div style="color:var(--text-muted); font-size:14px; margin-bottom:8px;">${result.reason}</div>` : ''}
+    <div style="color:var(--text-muted); font-size:14px;">인식된 소리: ${result.recognizedText || '(없음)'}</div>
     <br/>
     <button class="secondary-btn" id="retryBtn">다시 시도</button>
     <button class="big-btn" id="nextBtn">${isLast ? '단계 목록으로' : '다음 문제'}</button>
     ${result.pass ? '' : `
     <br/>
     <button class="secondary-btn success" id="overrideBtn">잘 발음했어요 (선생님 확인)</button>
+    <button class="secondary-btn" id="wrongRecognizedBtn" style="border-color:#dc2626; color:#dc2626;">점수/인식된 소리 수정 (선생님 확인)</button>
+    ${state.editingRecognized ? `
+      <div style="margin-top:8px; border:2px solid #dc2626; border-radius:6px; padding:10px; text-align:left;">
+        <div style="font-size:13px; color:var(--text-muted); margin-bottom:8px;">${scoringGuidelineText(stage)}</div>
+        <label style="font-size:13px; display:block; margin-bottom:4px;">점수 (0~100)</label>
+        <input type="number" id="accuracyInput" min="0" max="100"
+          style="border:2px solid #dc2626; border-radius:4px; padding:6px; font-size:15px; width:80px;"
+          value="${result.accuracy}" />
+        <label style="font-size:13px; display:block; margin:8px 0 4px;">인식된 소리</label>
+        <input type="text" id="recognizedInput" placeholder="실제로 들린 소리를 입력하세요"
+          style="border:2px solid #dc2626; border-radius:4px; padding:6px; font-size:15px; width:60%;"
+          value="${escapeHtml(result.recognizedText || '')}" />
+        <br/>
+        <button class="secondary-btn" id="saveRecognizedBtn" style="margin-top:8px;">저장</button>
+      </div>
+    ` : ''}
     `}
   `;
-  document.getElementById('retryBtn').onclick = () => { state.screen = 'practice'; render(); };
+  document.getElementById('retryBtn').onclick = () => { state.editingRecognized = false; state.screen = 'practice'; render(); };
   document.getElementById('nextBtn').onclick = () => goToNextItem(isLast);
   // 오답 처리됐지만 선생님이 옆에서 듣기에 실제로는 맞게 발음한 경우를 위한 예외 처리 버튼.
   // 한 음절만 따로 말하면 Azure도 가끔 비슷한 다른 소리로 잘못 알아듣기 때문에(예: "라"->"락"),
@@ -1965,12 +2228,47 @@ function renderResult(result) {
       }
       goToNextItem(isLast);
     };
+    // "점수/인식된 소리 수정" 버튼: 가끔 Azure가 실제로 말한 소리와 전혀 다른 텍스트를 인식
+    // 결과로 내놓거나(2026-09-03, 사용자 발견), 그래서 점수도 실제와 다르게 나오는 경우를 위해,
+    // 선생님이 점수와 인식된 소리를 직접 고쳐 넣을 수 있게 한다. 임의로 숫자만 적게 하면 기준이
+    // 없어 들쭉날쭉해질 수 있어서, 패널 안에 그 단계의 실제 채점 기준(scoringGuidelineText)을
+    // 같이 보여준다.
+    document.getElementById('wrongRecognizedBtn').onclick = () => {
+      state.editingRecognized = !state.editingRecognized;
+      render();
+    };
+    if (state.editingRecognized) {
+      document.getElementById('saveRecognizedBtn').onclick = () => {
+        const typedText = document.getElementById('recognizedInput').value.trim();
+        // 비워두거나 숫자가 아니면 원래 점수로 되돌리고, 값이 있으면 0~100 범위로 잘라낸다.
+        const rawAccuracy = document.getElementById('accuracyInput').value.trim();
+        const typedNum = Number(rawAccuracy);
+        const accuracy = rawAccuracy && Number.isFinite(typedNum) ? Math.max(0, Math.min(100, Math.round(typedNum))) : result.accuracy;
+        if (state.currentSessionIdx !== null) {
+          const session = state.sessions[state.currentSessionIdx];
+          session.items[state.itemIdx] = {
+            ...session.items[state.itemIdx],
+            accuracy,
+            pass: accuracy >= 70,
+            recognizedText: typedText,
+            feedback: '선생님이 직접 채점함',
+            // 자동 채점이 내놓은 단어별 오류 진단(wordIssues)은 선생님이 방금 덮어쓴 점수와
+            // 더 이상 안 맞을 수 있어 지운다 - 안 지우면 세션 상세 화면에 "선생님이 직접 채점"
+            // 태그 아래 예전 자동 진단이 그대로 남아 보이는 문제가 있었다(2026-09-03, 코드 리뷰).
+            wordIssues: [],
+          };
+          saveSessionItems(session);
+        }
+        goToNextItem(isLast);
+      };
+    }
   }
 }
 
 // "다음 문제" 버튼과 "잘 발음했어요" 버튼이 공통으로 쓰는 화면 전환 로직.
 // 마지막 문항이었으면 단계 목록으로, 아니면 문항 번호를 하나 올리고 문제 풀이 화면으로 돌아간다.
 function goToNextItem(isLast) {
+  state.editingRecognized = false;
   if (isLast) {
     state.screen = 'stageList';
   } else {
